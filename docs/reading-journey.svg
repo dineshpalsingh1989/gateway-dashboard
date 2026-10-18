@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="390" viewBox="0 0 1000 390" role="img" aria-labelledby="title desc" font-family="Segoe UI,Arial,sans-serif">
+<title id="title">How a sensor reading reaches the dashboard</title><desc id="desc">Sensors send readings through a gateway over MQTT. The server authenticates the workspace and decodes the payload, then stores readings in Firestore. The browser uses Firebase sign-in and workspace rules for live data and history.</desc>
+<defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0 8 4 0 8" fill="#177b70"/></marker></defs>
+<rect width="1000" height="390" rx="20" fill="#f3f8f7"/>
+<text x="36" y="38" font-size="12" fill="#177b70" letter-spacing="3">FOLLOW ONE READING</text><text x="36" y="73" font-size="27" font-weight="700" fill="#173b42">A clear path from sensor to screen</text>
+<g fill="none" stroke="#177b70" stroke-width="2" marker-end="url(#arrow)"><path d="M204 174H226"/><path d="M394 174H416"/><path d="M584 174H606"/><path d="M774 174H796"/></g>
+<g stroke="#c5dad6" fill="#fff"><rect x="36" y="118" width="168" height="120" rx="12"/><rect x="226" y="118" width="168" height="120" rx="12"/><rect x="416" y="118" width="168" height="120" rx="12"/><rect x="606" y="118" width="168" height="120" rx="12"/><rect x="796" y="118" width="168" height="120" rx="12"/></g>
+<g fill="#dff0eb"><circle cx="67" cy="149" r="14"/><circle cx="257" cy="149" r="14"/><circle cx="447" cy="149" r="14"/><circle cx="637" cy="149" r="14"/><circle cx="827" cy="149" r="14"/></g>
+<g text-anchor="middle" font-size="12" font-weight="700" fill="#166c5d"><text x="67" y="153">1</text><text x="257" y="153">2</text><text x="447" y="153">3</text><text x="637" y="153">4</text><text x="827" y="153">5</text></g>
+<g font-size="17" font-weight="700" fill="#173b42"><text x="52" y="187">Sensor</text><text x="242" y="187">Gateway</text><text x="432" y="187">Broker + decoder</text><text x="622" y="187">Firestore</text><text x="812" y="187">Dashboard</text></g>
+<g font-size="12" fill="#506e71"><text x="52" y="210">Measure &amp; transmit</text><text x="242" y="210">LoRaWAN to MQTT</text><text x="432" y="210">Validate &amp; decode</text><text x="622" y="210">Store readings</text><text x="812" y="210">Live data &amp; history</text></g>
+<rect x="36" y="264" width="928" height="88" rx="12" fill="#e2f0eb"/>
+<text x="56" y="292" font-size="15" font-weight="700" fill="#166454">Two access checks, one workspace</text>
+<text x="56" y="316" font-size="13" fill="#355b53">Gateway: MQTT credentials + workspace topic. Browser: Firebase sign-in + Firestore rules.</text>
+<text x="56" y="337" font-size="13" fill="#355b53">Use View history for the latest 500 stored readings in a period, then download CSV.</text>
+</svg>

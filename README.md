@@ -22,6 +22,8 @@ The installer installs Docker if needed, starts the dashboard, and prints the se
 
 ## Configure Firebase
 
+![Six-step Firebase setup: create, configure, test, save, deploy rules, and restart](docs/firebase-setup.svg)
+
 1. Create a Firebase project and a Firestore database in Native mode.
 2. Enable **Authentication > Email/Password**. Add your dashboard hostname to Authentication's authorized domains. Enable Google or Microsoft sign-in if you plan to use them.
 3. Download a service-account JSON key from **Project settings > Service accounts**. Save it on the server as `~/milesight-dashboard/data/serviceAccountKey.json`. Keep it readable only by the container's runtime user; never commit it.
@@ -49,6 +51,8 @@ Before configuration is complete, setup remains available and MQTT stays offline
 To change Firebase later, open **Settings > Firebase > Configure Firebase & test connection**, or visit `/setup`. Saving requires a restart to apply changes.
 
 ## Connect a Milesight gateway
+
+![A reading travels from sensor through the gateway and broker to Firestore and the dashboard](docs/reading-journey.svg)
 
 Copy the connection details from the dashboard's Settings into your gateway's MQTT settings:
 
