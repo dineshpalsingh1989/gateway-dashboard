@@ -12,6 +12,8 @@ A self-hosted MQTT broker and live dashboard for Milesight gateways, with Fireba
 
 ![Architecture](docs/architecture.svg)
 
+The gateway publishes to the server's MQTT broker. The server decodes readings and writes them to Firestore; the signed-in dashboard reads live data and history through Firebase.
+
 ## Install on Linux
 
 ```sh
@@ -67,6 +69,14 @@ Incoming readings appear automatically. Use **View history** to chart up to the 
 
 For Telegram, enter your bot token and Gemini API key in Settings, run their test buttons, and save. Add members by email and issue their invitation codes from the same page.
 
+![Telegram question flow: ask, check access, prepare workspace context, and return an answer](docs/telegram-flow.svg)
+
+## Workspace access
+
+![Gateway, dashboard owner, and Telegram member access paths](docs/workspace-access.svg)
+
+Each gateway uses its workspace MQTT credentials and topic. Owners use Firebase sign-in for dashboard access. Members added by email use the Telegram assistant; membership alone does not grant the owner's dashboard or broker credentials.
+
 ## Run directly with Node.js
 
 Use Node.js 22 or 24, which are checked in CI.
@@ -83,6 +93,8 @@ Open `http://localhost:8080/setup` and follow the Firebase steps above. Place th
 Optionally copy `.env.example` to `.env` before starting to customize the server.
 
 ## Configuration and saved files
+
+![Docker storage layout: local runtime files are mounted into the container, while readings and user accounts live in Firebase](docs/docker-storage.svg)
 
 For Docker installations, application files live in `data/`:
 
