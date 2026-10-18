@@ -41,15 +41,21 @@ Unrecognised devices are still stored, under a generic `value` metric.
 
 ## Quick start
 
-### One-command install (Linux, Docker)
-
-Requires [Docker](https://docs.docker.com/engine/install/) with Compose v2 and your own Firebase project.
+### One-command install (Linux)
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/dineshpalsingh1989/milesight-dashboard/main/install.sh | sh
 ```
 
-This installs to `~/milesight-dashboard`, pulls the image from GitHub Packages, starts it, and prints the setup URL and token. Put your Firebase service-account JSON at `~/milesight-dashboard/data/serviceAccountKey.json`, finish the setup page, then run `docker compose restart`. All state is kept in `~/milesight-dashboard/data`. Update with `docker compose pull && docker compose up -d`.
+The script installs Docker if it is missing, downloads the dashboard to `~/milesight-dashboard`, starts it, and prints the setup URL and token. Then:
+
+1. Create a free [Firebase project](https://console.firebase.google.com/) and enable **Firestore** and **Authentication → Email/Password**.
+2. Download a service-account key (Project settings → Service accounts → Generate new private key) and save it as `~/milesight-dashboard/data/serviceAccountKey.json`.
+3. Open the printed `/setup` URL, enter the token, paste your Firebase web config, click **Test**, then **Save**.
+4. Run `cd ~/milesight-dashboard && docker compose restart`, open `http://<server-ip>:8080` and register.
+5. Point your Milesight gateway's MQTT settings at `<server-ip>` port `1883`.
+
+All state lives in `~/milesight-dashboard/data`. To update, re-run the install command. To stop, run `docker compose down` in that folder.
 
 ### From source
 
