@@ -7,6 +7,16 @@ import { installShutdown } from './runtime.js'
 export const webFields = ['apiKey', 'authDomain', 'projectId', 'appId', 'storageBucket', 'messagingSenderId', 'databaseURL']
 export const envFields = ['API_KEY', 'AUTH_DOMAIN', 'PROJECT_ID', 'APP_ID', 'STORAGE_BUCKET', 'MESSAGING_SENDER_ID', 'DATABASE_URL']
 const configPath = resolve('firebase.local.json')
+export function readStorageMode() {
+  if (process.env.STORAGE_MODE) {
+    if (!['firebase', 'duckdb'].includes(process.env.STORAGE_MODE)) throw Error('STORAGE_MODE must be firebase or duckdb')
+    return process.env.STORAGE_MODE
+  }
+  if (!existsSync('storage.local.json')) return 'firebase'
+  const mode = JSON.parse(readFileSync('storage.local.json', 'utf8')).mode
+  if (!['firebase', 'duckdb'].includes(mode)) throw Error('Invalid storage.local.json')
+  return mode
+}
 
 export function readSavedConfig(path = configPath) {
   if (!existsSync(path)) return { web: {}, keyPath: './serviceAccountKey.json' }
@@ -135,16 +145,23 @@ export function createSetupHandler(current, { token = process.env.FIREBASE_SETUP
       const saved = existsSync(path) ? readSavedConfig(path) : null
       const restartRequired = Boolean(saved && ((process.env.FIREBASE_SERVICE_ACCOUNT_PATH || saved.keyPath) !== current.keyPath ||
         webFields.some((key, i) => (process.env['VITE_FIREBASE_' + envFields[i]] || saved.web[key] || '') !== (current.web[key] || ''))))
-      reply(200, { ...(saved || current), restartRequired, overrides: webFields.filter((_, i) => process.env['VITE_FIREBASE_' + envFields[i]]),
+      reply(200, { ...(saved || current), storageMode: readStorageMode(), restartRequired, overrides: webFields.filter((_, i) => process.env['VITE_FIREBASE_' + envFields[i]]),
         keyPathOverride: Boolean(process.env.FIREBASE_SERVICE_ACCOUNT_PATH) }); return true
     }
-    if (!['/setup/save', '/setup/test'].includes(pathname) || req.method !== 'POST') { reply(404, { error: 'Not found' }); return true }
+    if (!['/setup/save', '/setup/test', '/setup/storage'].includes(pathname) || req.method !== 'POST') { reply(404, { error: 'Not found' }); return true }
     try {
       let raw = '', size = 0
       for await (const chunk of req) {
         size += chunk.length
         if (size > 16384) { reply(413, { error: 'Configuration is too large.' }); return true }
         raw += chunk.toString('utf8')
+      }
+      if (pathname === '/setup/storage') {
+        const value = JSON.parse(raw)
+        if (!['firebase','duckdb'].includes(value.mode)) { reply(400,{error:'Choose Firebase or DuckDB'}); return true }
+        writeFileSync('storage.local.json.tmp',JSON.stringify({mode:value.mode})+'\n',{mode:0o600})
+        renameSync('storage.local.json.tmp','storage.local.json')
+        reply(200,{ok:true,message:'Storage choice saved. Restart the server to apply. Existing data stays in its original database; no migration is performed.'+(process.env.STORAGE_MODE?' STORAGE_MODE environment override is active and takes precedence.':'')}); return true
       }
       let config
       try { config = validateConfig(JSON.parse(raw)) } catch (error) { reply(400, { error: error instanceof SyntaxError ? 'Invalid JSON.' : error.message }); return true }

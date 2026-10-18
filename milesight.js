@@ -28,12 +28,22 @@ import os from 'node:os'
 import { setTimeout as delay } from 'node:timers/promises'
 import Aedes from 'aedes'
 import { initializeApp, cert } from 'firebase-admin/app'
-import { getFirestore, FieldValue } from 'firebase-admin/firestore'
-import { getAuth } from 'firebase-admin/auth'
-import { readSavedConfig, createSetupHandler, startSetupServer } from './firebase-setup.js'
+import { getFirestore, FieldValue as FirebaseFieldValue } from 'firebase-admin/firestore'
+import { getAuth as getFirebaseAuth } from 'firebase-admin/auth'
+import { readSavedConfig, readStorageMode, createSetupHandler, startSetupServer } from './firebase-setup.js'
 import { requestJSON, abortRequests, installShutdown } from './runtime.js'
 import { EXTRA_PROFILES, EXTRA_META } from './sensor-profiles.js'
 import { createDownlinkHandler } from './downlink.js'
+import { randomBytes } from 'node:crypto'
+import { openLocalStore, localFields } from './local-store.js'
+import { createLocalAuth, json } from './local-api.js'
+import { systemStatus, statusText } from './system-status.js'
+import { menuKeyboard, sensorCommand } from './telegram-menu.js'
+const STORAGE_MODE = readStorageMode()
+const DATABASE_PATH = process.env.DUCKDB_PATH || './milesight.duckdb'
+const SETUP_TOKEN = process.env.FIREBASE_SETUP_TOKEN || randomBytes(24).toString('hex')
+process.env.FIREBASE_SETUP_TOKEN = SETUP_TOKEN
+const FieldValue = STORAGE_MODE === 'duckdb' ? localFields : FirebaseFieldValue
 
 // ===========================================================================
 //  VERSION
@@ -43,12 +53,13 @@ import { createDownlinkHandler } from './downlink.js'
 // /health, and in the startup log, so "which build is actually running?" is
 // never a guess again. BUILD is the date the version was cut.
 
-const VERSION = '2.0.0'
+const VERSION = '2.1.1'
 const BUILD = '2026-10-18'
 
 // What changed, newest first. Kept here so the running server can tell you
 // its own history - no changelog file to lose track of.
 const CHANGES = [
+  ['2.1.1', 'Firebase cloud or local DuckDB storage with local sign-in, Telegram command buttons without AI or optional Gemini, and authenticated system disk and memory status. Restart to switch storage; data is not migrated.'],
   ['2.0.0 public browser demo', 'Added a GitHub Pages demo with all 24 sample devices, charts, CSV export, and simulated commands. The static demo requires no server, Firebase credentials, or gateway.'],
   ['2.0.0 sensors and MQTT commands', 'Added a 24-device local demo, 17 gateway-decoded sensor profiles, workspace-protected MQTT downlinks with UC300 presets, message previews, and command history. Published status does not confirm sensor delivery. Deploy updated Firestore rules and configure the gateway downlink topic for live use.'],
   ['2.0.0 reliability update', 'Gated image publishing on checks and exact-source installation tests, added CI rules-emulator coverage, non-root container defaults, request deadlines, and graceful service shutdown.'],
@@ -136,7 +147,7 @@ const CFG = {
   },
 }
 
-if (!existsSync(CFG.keyPath) || !CFG.web.apiKey || !CFG.web.projectId || !CFG.web.authDomain || !CFG.web.appId) {
+if (STORAGE_MODE === 'firebase' && (!existsSync(CFG.keyPath) || !CFG.web.apiKey || !CFG.web.projectId || !CFG.web.authDomain || !CFG.web.appId)) {
   startSetupServer(CFG.webPort, { web: CFG.web, keyPath: CFG.keyPath })
   // Keep the setup server available without initializing Firebase or the broker.
   await new Promise(() => {})
@@ -170,7 +181,7 @@ const SERVER_HOST = detectHost()
 // The Admin SDK BYPASSES security rules - it is the server, so it is trusted.
 // That is how the broker reads brokerUsers/{username}, whose reads are denied
 // to every browser client. Browsers may create their own broker credentials.
-try {
+if (STORAGE_MODE === 'firebase') try {
   const serviceAccount = JSON.parse(readFileSync(CFG.keyPath, 'utf8'))
   if (serviceAccount.project_id !== CFG.web.projectId) throw new Error('Firebase project mismatch')
   initializeApp({ credential: cert(serviceAccount), projectId: CFG.web.projectId })
@@ -179,7 +190,9 @@ try {
   startSetupServer(CFG.webPort, { web: CFG.web, keyPath: CFG.keyPath })
   await new Promise(() => {})
 }
-const db = getFirestore()
+const db = STORAGE_MODE === 'duckdb' ? await openLocalStore(DATABASE_PATH) : getFirestore()
+const localAuth = STORAGE_MODE === 'duckdb' ? createLocalAuth(db, SETUP_TOKEN) : null
+const getAuth = () => localAuth || getFirebaseAuth()
 
 // ===========================================================================
 //  LIVE DEBUG STREAM
@@ -854,6 +867,7 @@ async function scrub(token, chatId, messageId) {
 // this asks Identity Toolkit - the same endpoint the dashboard's login form
 // uses - and keeps nothing but the yes/no.
 async function verifyPassword(email, password) {
+  if (localAuth) { try { const user = await localAuth.login(email,password); return {ok:true,uid:user.uid} } catch { return {ok:false,wrong:true} } }
   const { response: r, data: j } = await requestJSON(
     'https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=' +
     encodeURIComponent(CFG.web.apiKey), {
@@ -904,7 +918,7 @@ async function tg(token, method, body, signal) {
 function say(token, chatId, text) {
   // Telegram rejects anything over 4096 characters outright.
   const body = String(text || '').slice(0, 4000)
-  return tg(token, 'sendMessage', { chat_id: chatId, text: body }).catch(() => {})
+  return tg(token, 'sendMessage', { chat_id: chatId, text: body, reply_markup: menuKeyboard }).catch(() => {})
 }
 
 // Is this chat allowed to ask this workspace questions?
@@ -982,7 +996,7 @@ async function redeemCode(uid, token, chatId, code, from) {
 
   await say(token, chatId,
     'Signed in as ' + (d.email || 'your account') + ' (' + m.role + ').\n\n' +
-    'Ask me about your sensors in plain language - try "what is the latest from every device".')
+    'Choose a command using /menu.')
   emit(uid, 'info', { msg: 'telegram: ' + (d.email || d.uid) + ' linked as ' + m.role })
   return true
 }
@@ -1244,7 +1258,7 @@ async function finishLink(uid, token, chatId, tgId, who, email, userUid, isNew) 
     : ''
   return say(token, chatId,
     (isNew ? 'Account created and signed in as ' : 'Signed in as ') + email +
-    ' (' + m.role + ').' + note + '\n\nAsk me anything about your sensors.')
+    ' (' + m.role + ').' + note + '\n\nChoose a command using /menu.')
 }
 
 async function handleMessage(uid, token, msg) {
@@ -1275,7 +1289,7 @@ async function handleMessage(uid, token, msg) {
     if (me) {
       return void (await say(token, chatId,
         'You are already signed in as ' + (me.email || 'this account') + '.\n\n' +
-        'Just ask me about your sensors - try "what is the latest from every device".\n' +
+        'Choose a command using /menu.\n' +
         '/help for more, /signout to sign out.'))
     }
     // Signing in is a private conversation. Doing it in a group would put
@@ -1363,26 +1377,24 @@ async function handleMessage(uid, token, msg) {
   if (CODE_RE.test(text)) {
     return void (await say(token, chatId,
       'You are already signed in as ' + (me.email || 'this account') +
-      ', so you do not need a code. Just ask me a question.'))
+      ', so you do not need a code. Choose a command using /menu.'))
   }
   if (EMAIL_RE.test(text)) {
     const same = String(text).toLowerCase() === String(me.email || '').toLowerCase()
     return void (await say(token, chatId, same
-      ? 'You are already signed in as ' + me.email + '. Just ask me a question.'
+      ? 'You are already signed in as ' + me.email + '. Choose a command using /menu.'
       : 'This chat is signed in as ' + (me.email || 'another account') +
         '. To use a different address, send /signout first.'))
   }
 
-  if (/^\/help\b/.test(text)) {
-    return void (await say(token, chatId,
-      'Ask me anything about your sensors, in plain language. For example:\n' +
-      '  what is the latest from every device\n' +
-      '  is anything offline\n' +
-      '  how busy was the office today\n' +
-      '  which device has the weakest signal\n\n' +
-      '/whoami   which account you are signed in as\n' +
-      '/signout  unlink this Telegram account'))
+  if (/^\/system(?:@\w+)?(?:\s|$)/i.test(text)) {
+    if (m.role !== 'owner' || inGroup) return void (await say(token,chatId,'System status is available to the owner in a private chat.'))
+    return void (await say(token,chatId,statusText(await systemStatus(DATABASE_PATH,STORAGE_MODE))))
   }
+  const menuAnswer = sensorCommand(text, /^\/(devices|latest|status)(?:@|\s|$)/i.test(text) ? await workspaceContext(uid) : {devices:[]})
+  if (menuAnswer !== null) return void (await say(token,chatId,menuAnswer))
+  const modeDoc = await db.doc('workspaces/'+uid+'/settings/telegram').get()
+  if (!modeDoc.exists || modeDoc.data().mode !== 'gemini') return void (await say(token,chatId,'Choose a command with /menu. This bot uses command buttons without AI.'))
 
   const limit = rateLimited(tgId)
   if (limit) return void (await say(token, chatId, 'Please ' + limit + '.'))
@@ -1511,6 +1523,7 @@ const health = { firestore: 'checking', firestoreAt: 0, firestoreError: '',
 // perfectly healthy. So ask Google directly and put the answer where someone
 // staring at a login screen will see it.
 async function checkWebKey() {
+  if (STORAGE_MODE === 'duckdb') { health.webKey='ok'; return }
   try {
     const r = await fetch(
       'https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=' +
@@ -1591,6 +1604,12 @@ const downlinkHandler = createDownlinkHandler({
 })
 const webServer = http.createServer(async (req, res) => {
   if (await setupHandler(req, res)) return
+  if (localAuth && await localAuth.handle(req,res)) return
+  if (req.url === '/system-status') {
+    try { await getAuth().verifyIdToken((req.headers.authorization || '').replace(/^Bearer /,'')) }
+    catch { return json(res,401,{error:'Please sign in'}) }
+    return json(res,200,await systemStatus(DATABASE_PATH,STORAGE_MODE))
+  }
   if (req.url === '/downlink') return downlinkHandler(req, res)
   // Live debug stream. The browser proves who it is with a Firebase ID token;
   // we verify it server-side and only ever send that uid's events.
@@ -1702,6 +1721,7 @@ const webServer = http.createServer(async (req, res) => {
     })
     return res.end(JSON.stringify({
       ok: true,
+      storageMode: STORAGE_MODE,
       version: VERSION,
       build: BUILD,
       uptime: Math.round(process.uptime()),
@@ -1723,7 +1743,8 @@ const webServer = http.createServer(async (req, res) => {
   // Function replacements, not string ones: a literal replacement string
   // treats $& and friends as backreferences, which would corrupt any changelog
   // entry that ever contains a dollar sign.
-  res.end(PAGE.replace('__FIREBASE_CONFIG__', () => JSON.stringify(CFG.web).replace(/</g, '\\u003c'))
+  const servedPage = STORAGE_MODE === 'duckdb' ? PAGE.replace(/import \{ initializeApp \}[\s\S]*?firebase-firestore\.js'/, () => readFileSync(new URL('./local-sdk.js',import.meta.url),'utf8')).replace('var FB =', 'var LOCAL_MODE = true; var FB =') : PAGE.replace('var FB =','var LOCAL_MODE = false; var FB =')
+  res.end(servedPage.replace('__FIREBASE_CONFIG__', () => JSON.stringify(CFG.web).replace(/</g, '\\u003c'))
               .replace('__EXTRA_PROFILES__', () => JSON.stringify(EXTRA_PROFILES))
               .replace('__EXTRA_META__', () => JSON.stringify(EXTRA_META))
               .replace('__CHANGES__', () => JSON.stringify(CHANGES))
@@ -2482,9 +2503,9 @@ const PAGE = String.raw`<!doctype html>
     </div>
 
     <div class="panel">
-      <h3>Firebase</h3>
-      <p>Where your data is going, and whether it is getting there.</p>
-      <p><a href="/setup">Configure Firebase &amp; test connection</a> · Requires the server administrator setup token.</p>
+      <h3>Storage and sign-in</h3>
+      <p>Choose Firebase cloud or local DuckDB in server setup. Switching requires a restart and keeps the databases separate.</p>
+      <p><a href="/setup">Choose storage / configure Firebase</a> · Requires the server administrator setup token.</p>
     <div class="leds">
       <span class="led" data-led="srv"><i></i><span data-ledtext="srv">Server</span></span>
       <span class="led" data-led="mq"><i></i><span data-ledtext="mq">Broker</span></span>
@@ -2527,9 +2548,8 @@ const PAGE = String.raw`<!doctype html>
     </div>
 
     <div class="panel">
-      <h3>Telegram assistant</h3>
-      <p>Ask about your sensors from your phone. Your own bot, your own Gemini key,
-         and it can only ever see this workspace.</p>
+      <h3>Telegram</h3>
+      <p>Use command buttons without AI, or choose Gemini for sensor questions. Each bot can only see its own workspace.</p>
 
       <label for="tg-token">Bot token <span class="lbl-note">from BotFather</span></label>
       <input id="tg-token" type="password" autocomplete="off" spellcheck="false"
@@ -2537,6 +2557,7 @@ const PAGE = String.raw`<!doctype html>
       <span class="hint">In Telegram, message <code>&#64;BotFather</code>, send
         <code>/newbot</code>, and paste the token it gives you.</span>
 
+      <label for="tg-mode">Interaction mode</label><select id="tg-mode"><option value="commands">Command buttons (no AI)</option><option value="gemini">Gemini AI</option></select>
       <label for="tg-key">Gemini API key</label>
       <input id="tg-key" type="password" autocomplete="off" spellcheck="false"
              placeholder="AIza...">
@@ -2600,7 +2621,7 @@ const PAGE = String.raw`<!doctype html>
       <h3>Storage</h3>
       <p>One flat 1 GB per workspace. At the cap the oldest readings roll off automatically,
          so a full database never costs you an uplink.</p>
-      <div id="sto"></div>
+      <div id="sto"></div><h4>System status</h4><p id="system-resources">Refresh to check server disk and memory.</p><button type="button" id="system-refresh">Refresh system status</button>
     </div>
 
     <div class="panel">
@@ -2860,6 +2881,10 @@ import { getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, deleteField,
   from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js'
 
 var FB = __FIREBASE_CONFIG__
+if(LOCAL_MODE){
+ document.querySelectorAll('[data-oauth]').forEach(function(b){b.hidden=true})
+ var localTokenField=document.createElement('label');localTokenField.textContent='Administrator setup token (required for local registration)';var localTokenInput=document.createElement('input');localTokenInput.id='local-admin-token';localTokenInput.type='password';localTokenInput.autocomplete='off';localTokenField.appendChild(localTokenInput);document.getElementById('rg-pass').parentNode.insertBefore(localTokenField,document.getElementById('rg-pass'));document.getElementById('rg-pass').minLength=10
+}
 var app = initializeApp(FB)
 var auth = getAuth(app)
 var fs = getFirestore(app)
@@ -3469,7 +3494,7 @@ function renderHealth(){
   $('h-fs').textContent=fsState==='live'
     ? 'Live'+(lastSync?' - synced '+ago(lastSync):'')
     : FS_LABEL[fsState]
-  $('h-proj').textContent=(FB&&FB.projectId)||'unknown'
+  $('h-proj').textContent=LOCAL_MODE?'Local DuckDB':((FB&&FB.projectId)||'unknown')
 
   var used=storage&&storage.usedBytes?storage.usedBytes:0
   var stored=storage&&storage.storedReadings?storage.storedReadings:0
@@ -3683,6 +3708,11 @@ async function checkMembership(){
   showAuth('v-member')
 }
 
+if($('system-refresh'))$('system-refresh').onclick=async function(){
+  try {var token=await auth.currentUser.getIdToken();var r=await fetch('/system-status',{headers:{authorization:'Bearer '+token}});var s=await r.json();if(!r.ok)throw Error(s.error);
+    $('system-resources').textContent='Storage: '+s.storageMode+(s.databaseBytes!==null?' | DuckDB: '+bytes(s.databaseBytes):'')+(s.disk?' | Disk free: '+bytes(s.disk.freeBytes)+' / '+bytes(s.disk.totalBytes):' | Disk unavailable')+' | Memory free: '+bytes(s.memory.freeBytes)+' / '+bytes(s.memory.totalBytes)+' ('+s.memory.scope+') | App RAM: '+bytes(s.processMemoryBytes)
+  }catch(e){$('system-resources').textContent=e.message}
+}
 // -------- members --------
 //
 // The list is stored on the workspace, and mirrored into a top-level
@@ -3851,9 +3881,18 @@ document.addEventListener('click',async function(e){
 // The bot token and the Gemini key are secrets, so they are never echoed back
 // into the form. The fields show a placeholder when something is stored, and
 // an empty field on save means "leave it as it is" rather than "erase it".
+function renderTelegramMode(){
+  var ai=$('tg-mode').value==='gemini'
+  ;['tg-key','tg-model'].forEach(function(id){var el=$(id);el.hidden=!ai;var label=document.querySelector('label[for="'+id+'"]');if(label)label.hidden=!ai;if(el.nextElementSibling)el.nextElementSibling.hidden=!ai})
+  $('tg-test-ai').hidden=!ai
+}
+var tgModeDirty=false
+$('tg-mode').onchange=function(){tgModeDirty=true;renderTelegramMode()}
 function renderTelegram(){
   if(!$('tg-token'))return
   var focused=document.activeElement
+  if(!tgModeDirty&&focused!==$('tg-mode'))$('tg-mode').value=(tgCfg&&tgCfg.mode)||'commands'
+  renderTelegramMode()
 
   if(focused!==$('tg-token'))
     $('tg-token').placeholder=(tgCfg&&tgCfg.hasToken)?'•••• saved - type to replace':'1234567890:AA...'
@@ -3915,12 +3954,13 @@ $('tg-save').onclick=async function(){
       await setDoc(doc(fs,'workspaces',myUid,'secrets','telegram'),
         {geminiKey:key,updatedAt:serverTimestamp()},{merge:true})
 
-    var patch={updatedAt:serverTimestamp()}
+    var patch={updatedAt:serverTimestamp(),mode:$('tg-mode').value}
     if(key)patch.hasKey=true
     if(token)patch.hasToken=true
     patch.geminiModel=model||'gemini-3.5-flash-lite'
     patch.sessionMinutes=Number($('tg-session').value)||0
     await setDoc(doc(fs,'workspaces',myUid,'settings','telegram'),patch,{merge:true})
+    tgModeDirty=false
 
     if(token)
       await setDoc(doc(fs,'telegramBots',myUid),

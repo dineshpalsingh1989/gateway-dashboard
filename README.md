@@ -1,4 +1,4 @@
-﻿# Milesight Dashboard V2.0
+﻿# Milesight Dashboard v2.1.1
 
 <p align="center"><img src="docs/banner.svg" alt="Milesight Dashboard" width="100%"></p>
 
@@ -8,16 +8,23 @@
 
 [Releases](https://github.com/dineshpalsingh1989/milesight-dashboard/releases) · [Report a bug](https://github.com/dineshpalsingh1989/milesight-dashboard/issues/new/choose) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md)
 
-A self-hosted MQTT broker and live dashboard for Milesight gateways, with Firebase Firestore storage and an optional Telegram assistant.
+A self-hosted MQTT broker and live dashboard for Milesight gateways, with Firebase cloud or DuckDB local storage and Telegram command buttons or optional Gemini AI.
 
-The latest maintenance update adds a 24-device local demo, 17 additional sensor
-profiles, and authenticated MQTT downlink controls with command history.
+**v2.1.1 supports local and cloud operation:** choose **DuckDB on your own server** or **Firebase Firestore in the cloud**. Choose **Telegram command buttons without AI** or **Gemini AI** independently of storage. Settings shows server disk, database size, and memory usage.
+
+| Mode | Data location | Sign-in |
+| --- | --- | --- |
+| Local (DuckDB) | Docker's mounted data folder on your server | Local email/password accounts; administrator token required for registration |
+| Cloud (Firebase) | Your Firebase Firestore project | Firebase Authentication |
+
+Select storage at **/setup**, save, and restart. Switching modes keeps their databases separate and does not migrate existing data. In local mode, Gemini still sends workspace summaries to Google if enabled; command buttons require no AI.
+
 See [CHANGELOG.md](CHANGELOG.md) for changes, validation, and deployment requirements.
 
 ![Architecture](docs/architecture.svg)
 
 The gateway sends readings to the workspace MQTT uplink topic. The server stores
-them in Firestore, and the signed-in dashboard displays live data and history.
+them in local DuckDB or cloud Firestore, and the signed-in dashboard displays live data and history.
 Owners can also send commands: dashboard → authenticated server endpoint → MQTT
 broker → gateway → sensor.
 
@@ -31,7 +38,9 @@ broker → gateway → sensor.
 | Device commands | Hexadecimal/Base64 preview, configurable topic, FPort, confirmation option, and UC300 DO1/DO2 presets |
 | Command history | Server-written attempts and publication status, readable only by the workspace owner |
 | Live dashboard | Device cards, history charts, CSV downloads, storage usage, and workspace debug stream |
-| Telegram assistant | Workspace-scoped sensor questions through your Telegram bot and Gemini key |
+| Storage options | Local DuckDB or cloud Firebase, selected in server setup |
+| Telegram | Fixed command buttons without AI, or optional Gemini sensor questions |
+| System status | Server disk capacity/free space, DuckDB file size, and memory usage |
 
 ## Try the dashboard demo
 
@@ -77,6 +86,16 @@ curl -fsSL https://raw.githubusercontent.com/dineshpalsingh1989/milesight-dashbo
 ```
 
 The installer installs Docker if needed, starts the dashboard, and prints the setup URL and administrator token. Files are installed under `~/milesight-dashboard`.
+
+## Choose local or cloud storage
+
+Open `/setup`, enter the administrator token, and use **Storage location** to choose **Firebase cloud** or **DuckDB local**. Save and restart the server. In Docker the local database is `~/milesight-dashboard/data/milesight.duckdb` on the host, mounted as `/data/milesight.duckdb`.
+
+Local mode stores accounts, settings, credentials, devices, sensor readings, and command history on this server. Firebase configuration is unnecessary. Register with the administrator setup token and a password of at least ten characters. Local sessions last 24 hours and end on restart. Email password resets and Google/Microsoft sign-in require Firebase mode.
+
+Choose **Command buttons (no AI)** or **Gemini AI** in Telegram Settings, independently of storage. Command mode needs only a Telegram bot token; no Gemini or Ollama is required. Use `/menu` for sensor commands. Owners can use `/system` privately to see server resources. Settings also has **Refresh system status** for disk, memory, and database size. Telegram requires internet, and Gemini mode sends workspace summaries to Google even with local storage.
+
+Switching storage does not migrate data. Each mode retains its own accounts and records. Stop the application before backing up the DuckDB database and WAL, and run one backend process per database file. Existing approximate 1 GB workspace retention still applies. See [v2.1.1 release notes](docs/releases/v2.1.1.md).
 
 ## Configure Firebase
 

@@ -2,7 +2,7 @@ FROM node:22-alpine
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
-COPY milesight.js runtime.js sensor-profiles.js downlink.js firebase-setup.html firebase-setup.js firebase.json firestore.rules firestore.indexes.json ./
+COPY milesight.js runtime.js sensor-profiles.js downlink.js local-store.js local-api.js local-sdk.js system-status.js telegram-menu.js firebase-setup.html firebase-setup.js firebase.json firestore.rules firestore.indexes.json ./
 ENV NODE_ENV=production
 # Runtime state (.env, firebase.local.json, serviceAccountKey.json) lives in /data
 WORKDIR /data
