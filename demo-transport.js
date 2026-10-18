@@ -14,10 +14,11 @@
     var url = new URL(typeof input === 'string' ? input : input.url, location.href)
     if (url.origin !== location.origin) return originalFetch(input, options)
     if (url.pathname === '/health') return json({
-      ok:true,demo:true,version:'2.0.0 Demo',build:'2026-10-18',
+      ok:true,demo:true,version:'2.1.1 Demo',build:'2026-10-18',
       uptime:Math.floor((Date.now()-started)/1000),host:'demo.local',project:'local-demo',
       mqtt:{listening:true,port:1883,clients:1},firestore:'ok',webKey:'ok',checkedAt:Date.now(),
     })
+    if (url.pathname === '/system-status') return json({storageMode:'demo',databaseBytes:null,disk:{totalBytes:107374182400,freeBytes:75161927680},memory:{totalBytes:8589934592,freeBytes:4294967296,scope:'Simulated demo'},processMemoryBytes:67108864})
     if (url.pathname === '/selftest') return json({ok:true,detail:'Demo: connection test simulated. No external service was contacted.'})
     if (url.pathname === '/downlink') {
       try {

@@ -11,3 +11,7 @@ data
 **/firebase.local.json
 **/*.log
 **/*.tmp
+storage.local.json
+storage.local.json.tmp
+**/*.duckdb
+**/*.duckdb.wal

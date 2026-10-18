@@ -1,5 +1,14 @@
 # Changelog
 
+## v2.1.1 ? 2026-10-18
+
+- Added administrator-selected Firebase cloud or DuckDB local storage. Local mode includes persistent accounts, settings, telemetry, history, and server-checked workspace access.
+- Added Telegram command buttons without AI, with optional Gemini selectable independently of storage.
+- Added authenticated disk, DuckDB file/WAL, and memory status in Settings and owner-only Telegram `/system`.
+- Updated Docker packaging, installation, demo version, and release documentation.
+- Storage changes require restart and do not migrate existing data. Local account creation requires the setup token; local mode has no email password reset or social sign-in.
+
+
 ## GitHub Pages demo — 2026-10-18
 
 - Added a self-contained browser demo at https://dineshpalsingh1989.github.io/milesight-dashboard/ with all 24 devices, charts, CSV export, editable settings, and simulated commands/history.

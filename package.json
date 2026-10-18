@@ -1,20 +1,21 @@
 {
   "name": "milesight-dashboard",
-  "version": "2.0.0",
-  "description": "MQTT broker, web dashboard, Firebase setup and Firestore storage for Milesight gateways",
+  "version": "2.1.1",
+  "description": "MQTT dashboard with Firebase or local DuckDB storage and Telegram command menus",
   "type": "module",
   "main": "milesight.js",
   "scripts": {
     "demo": "node demo.js",
     "build:demo": "node build-demo.js",
     "start": "node milesight.js",
-    "check": "node --check milesight.js && node --check firebase-setup.js && node --check runtime.js && node --check downlink.js && node --check sensor-profiles.js && node --check demo.js && node --check demo-sdk.js && node --check demo-data.js && node --check demo-page.js && node --check demo-transport.js && node --check build-demo.js",
+    "check": "node --check milesight.js && node --check firebase-setup.js && node --check runtime.js && node --check downlink.js && node --check sensor-profiles.js && node --check demo.js && node --check demo-sdk.js && node --check demo-data.js && node --check demo-page.js && node --check demo-transport.js && node --check build-demo.js && node --check local-store.js && node --check local-api.js && node --check local-sdk.js && node --check system-status.js && node --check telegram-menu.js",
     "test": "node --test"
   },
   "engines": {
     "node": ">=18"
   },
   "dependencies": {
+    "@duckdb/node-api": "^1.5.6-r.1",
     "aedes": "^0.51.3",
     "dotenv": "^16.4.5",
     "firebase-admin": "^12.7.0"

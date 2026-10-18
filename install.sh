@@ -31,7 +31,7 @@ mkdir -p "$DIR/data"
 cd "$DIR"
 if [ -n "$SOURCE_DIR" ]; then
   # Test the exact checkout without downloading main or pulling latest.
-  for file in Dockerfile docker-compose.yml package.json package-lock.json milesight.js runtime.js sensor-profiles.js downlink.js firebase-setup.js firebase-setup.html firebase.json firestore.rules firestore.indexes.json; do
+  for file in Dockerfile docker-compose.yml package.json package-lock.json milesight.js runtime.js sensor-profiles.js downlink.js local-store.js local-api.js local-sdk.js system-status.js telegram-menu.js firebase-setup.js firebase-setup.html firebase.json firestore.rules firestore.indexes.json; do
     cp "$SOURCE_DIR/$file" "$DIR/$file"
   done
 else

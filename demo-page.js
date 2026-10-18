@@ -13,8 +13,8 @@ export function buildDemoPage() {
   const sdk=readFileSync(new URL('./demo-sdk.js',import.meta.url),'utf8')
   const imports=/import \{ initializeApp \} from[^]*?from 'https:\/\/www.gstatic.com\/firebasejs\/10.12.2\/firebase-firestore.js'/
   if(!imports.test(page))throw new Error('Firebase module block not found')
-  page=page.replace(imports,()=>sdk)
-  const values={EXTRA_PROFILES:JSON.stringify(EXTRA_PROFILES),EXTRA_META:JSON.stringify(EXTRA_META),DEMO_SAMPLES:JSON.stringify(DEMO_SAMPLES),FIREBASE_CONFIG:'{"projectId":"local-demo"}',CHANGES:'[["Demo","Explore 24 sample devices. Changes stay in this browser session."]]',VERSION:'2.0.0 Demo',BUILD:'2026-10-18',BROKER_DOMAIN:'',SERVER_HOST:'demo.local',MQTT_PORT:'1883'}
+  page=page.replace(imports,()=>sdk).replace('var FB =','var LOCAL_MODE = false; var FB =')
+  const values={EXTRA_PROFILES:JSON.stringify(EXTRA_PROFILES),EXTRA_META:JSON.stringify(EXTRA_META),DEMO_SAMPLES:JSON.stringify(DEMO_SAMPLES),FIREBASE_CONFIG:'{"projectId":"local-demo"}',CHANGES:'[["Demo","Explore 24 sample devices. Changes stay in this browser session."]]',VERSION:'2.1.1 Demo',BUILD:'2026-10-18',BROKER_DOMAIN:'',SERVER_HOST:'demo.local',MQTT_PORT:'1883'}
   for(const [key,value] of Object.entries(values))page=page.replaceAll('__'+key+'__',()=>value)
   const transport=readFileSync(new URL('./demo-transport.js',import.meta.url),'utf8').replace('__BUILD_DOWNLINK__',()=>buildDownlink.toString())
   page=page.replace('<body>',()=>'<body><script>'+transport+'</script><div style="padding:10px;text-align:center;background:#134e4a;color:white">Interactive demo · 24 sample devices · Changes are temporary · Commands are simulated</div>')

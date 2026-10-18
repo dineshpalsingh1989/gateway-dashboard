@@ -7,3 +7,8 @@ firebase.local.json.tmp
 firebase-debug.log
 firestore-debug.log
 data/
+storage.local.json
+storage.local.json.tmp
+*.duckdb
+*.duckdb.wal
+*.duckdb.tmp/
