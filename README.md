@@ -2,6 +2,12 @@
 
 <p align="center"><img src="docs/banner.svg" alt="Milesight Dashboard" width="100%"></p>
 
+[![CI](https://github.com/dineshpalsingh1989/milesight-dashboard/actions/workflows/ci.yml/badge.svg)](https://github.com/dineshpalsingh1989/milesight-dashboard/actions/workflows/ci.yml)
+[![Install test](https://github.com/dineshpalsingh1989/milesight-dashboard/actions/workflows/install-test.yml/badge.svg)](https://github.com/dineshpalsingh1989/milesight-dashboard/actions/workflows/install-test.yml)
+[![Package build](https://github.com/dineshpalsingh1989/milesight-dashboard/actions/workflows/package.yml/badge.svg)](https://github.com/dineshpalsingh1989/milesight-dashboard/actions/workflows/package.yml)
+
+[Releases](https://github.com/dineshpalsingh1989/milesight-dashboard/releases) · [Report a bug](https://github.com/dineshpalsingh1989/milesight-dashboard/issues/new/choose) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md)
+
 A self-hosted MQTT broker and live dashboard for Milesight gateways, with Firebase Firestore storage and an optional Telegram assistant.
 
 ![Architecture](docs/architecture.svg)

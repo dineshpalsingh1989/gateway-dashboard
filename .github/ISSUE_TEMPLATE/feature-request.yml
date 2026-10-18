@@ -1,0 +1,23 @@
+name: Feature request
+description: Suggest an improvement.
+title: '[Feature] '
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve?
+      description: Describe your use case and who would benefit.
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Suggested behavior
+      description: Explain what you would like to happen, including alternatives you considered.
+    validations:
+      required: true
+  - type: textarea
+    id: hardware
+    attributes:
+      label: Relevant hardware or examples
+      description: Include gateway/sensor models if relevant. Redact credentials and personal data.

@@ -1,0 +1,41 @@
+name: Bug report
+description: Report a dashboard, gateway, setup, or installation problem.
+title: '[Bug] '
+body:
+  - type: markdown
+    attributes:
+      value: Do not include setup tokens, passwords, API keys, private keys, or unredacted sensor data. Report security vulnerabilities privately using SECURITY.md.
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      description: Find this in About, /health after setup, or your image tag.
+    validations:
+      required: true
+  - type: dropdown
+    id: installation
+    attributes:
+      label: Installation method
+      options:
+        - Linux installer
+        - Docker Compose
+        - Node.js source
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, CPU architecture, Node or Docker version, and gateway/sensor models where relevant.
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Include expected and actual behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Redacted logs or screenshots
+      description: Remove credentials and personal data. Startup logs can contain the administrator setup token.
