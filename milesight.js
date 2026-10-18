@@ -32,6 +32,8 @@ import { getFirestore, FieldValue } from 'firebase-admin/firestore'
 import { getAuth } from 'firebase-admin/auth'
 import { readSavedConfig, createSetupHandler, startSetupServer } from './firebase-setup.js'
 import { requestJSON, abortRequests, installShutdown } from './runtime.js'
+import { EXTRA_PROFILES, EXTRA_META } from './sensor-profiles.js'
+import { createDownlinkHandler } from './downlink.js'
 
 // ===========================================================================
 //  VERSION
@@ -47,6 +49,7 @@ const BUILD = '2026-10-18'
 // What changed, newest first. Kept here so the running server can tell you
 // its own history - no changelog file to lose track of.
 const CHANGES = [
+  ['2.0.0 sensors and MQTT commands', 'Added a 24-device local demo, 17 gateway-decoded sensor profiles, workspace-protected MQTT downlinks with UC300 presets, message previews, and command history. Published status does not confirm sensor delivery. Deploy updated Firestore rules and configure the gateway downlink topic for live use.'],
   ['2.0.0 reliability update', 'Gated image publishing on checks and exact-source installation tests, added CI rules-emulator coverage, non-root container defaults, request deadlines, and graceful service shutdown.'],
   ['2.0.0', 'Current release renamed V2.0 at the administrator\'s request. Includes protected Firebase setup, connection tests, saved settings, authorization rules, history fixes, and responsive setup styling with dark mode. Earlier version labels below are retained as build history.'],
   ['2.4.1', 'Polished Firebase setup with unsaved-change protection, clear save and restart status, locked fields during requests, actionable connection errors, and correct reloading of saved settings.'],
@@ -214,6 +217,7 @@ function emit(uid, type, data) {
 // ===========================================================================
 
 const PROFILES = {
+  ...EXTRA_PROFILES,
   'em300-th':  { short: 'EM300-TH',  label: 'Milesight EM300-TH (Temp & Humidity)',   metrics: ['temperature', 'humidity', 'battery'] },
   'em300-mcs': { short: 'EM300-MCS', label: 'Milesight EM300-MCS (Door Contact)',     metrics: ['magnet_status', 'battery'] },
   'am300':     { short: 'AM300',     label: 'Milesight AM300 (Ambient Monitoring)',   metrics: ['temperature', 'humidity', 'co2', 'pressure', 'battery'] },
@@ -253,7 +257,7 @@ function autoName(type, reportedName, eui) {
 function detectProfile(fields) {
   let best = { key: 'unknown', score: 0, matched: [] }
   for (const [key, p] of Object.entries(PROFILES)) {
-    if (key === 'unknown') continue
+    if (key === 'unknown' || EXTRA_PROFILES[key]) continue
     const matched = p.metrics.filter((m) => fields.includes(m))
     if (!matched.length) continue
     // A region-aware profile also explains region_1..region_16, which are
@@ -368,12 +372,13 @@ export function decodeMilesight(buf) {
 // The gateway usually names the model outright. That beats inferring it from
 // the payload shape, so when it is present we trust it.
 const NAME_TO_PROFILE = [
+  ...Object.keys(EXTRA_PROFILES).map(key => [key, key]),
   ['ts201', 'ts201'], ['ts30', 'ts201'],
   ['vs121', 'vs121'], ['vs12', 'vs121'],
   ['em300-mcs', 'em300-mcs'], ['em300', 'em300-th'],
   ['am30', 'am300'], ['am10', 'am300'],
   ['ws52', 'ws523'], ['ws50', 'ws523'],
-  ['uc30', 'uc300'], ['uc50', 'uc300'],
+  ['uc30', 'uc300'],
 ]
 
 function profileFromName(name) {
@@ -431,7 +436,10 @@ function parsePayload(buf) {
   // measurements win, because they are the actual sensor output rather than
   // something the gateway happened to also include.
   let attrs = {}, undecoded = [], decoded = false
-  if (typeof json.data === 'string' && json.data.length) {
+  // Additional profiles use the gateway codec. Never apply a generic raw
+  // channel table to these models: channel IDs have model-specific meanings.
+  const namedProfile = profileFromName(json.deviceProfileName || json.deviceName || json.device_name)
+  if (typeof json.data === 'string' && json.data.length && !EXTRA_PROFILES[namedProfile]) {
     try {
       const out = decodeMilesight(Buffer.from(json.data, 'base64'))
       Object.assign(values, out.values)
@@ -445,8 +453,16 @@ function parsePayload(buf) {
   const rx = Array.isArray(json.rxInfo) && json.rxInfo[0] ? json.rxInfo[0] : null
   const link = rx ? { rssi: rx.rssi, snr: rx.loRaSNR ?? rx.snr } : null
 
+  // Gateways may wrap codec output in object/objectJSON rather than top-level fields.
+  let object = json.object
+  if (!object && typeof json.objectJSON === 'string') { try { object = JSON.parse(json.objectJSON) } catch {} }
+  if (object && typeof object === 'object' && !Array.isArray(object)) {
+    for (const [key, value] of Object.entries(object)) {
+      if (!ENVELOPE.has(key) && ['number','boolean','string'].includes(typeof value)) values[ALIASES[key] || key] = value
+    }
+  }
   const fields = Object.keys(values)
-  const modelName = json.deviceName || json.device_name || json.devicename || null
+  const modelName = json.deviceProfileName || json.deviceName || json.device_name || json.devicename || null
 
   // An attribute-only packet has no readings but still tells us who the device
   // is - worth keeping rather than discarding as "nothing useful".
@@ -551,6 +567,8 @@ aedes.on('publish', (packet, client) => {
   }
 
   emit(client.uid, 'mqtt', { topic: packet.topic, payload: body })
+  // Downlinks and gateway notifications are not sensor readings.
+  if (packet.topic !== client.topicPrefix + '/uplink') return
   const storing = handleUplink(client.uid, packet.payload).catch((e) => {
     console.error('[broker] ' + client.uid + ': ' + e.message)
     emit(client.uid, 'error', { msg: e.message })
@@ -1560,8 +1578,19 @@ const firestoreTimer = setInterval(checkFirestore, 60000)
 // ===========================================================================
 
 const setupHandler = createSetupHandler({ web: CFG.web, keyPath: CFG.keyPath })
+const downlinkHandler = createDownlinkHandler({
+  verifyToken: token => getAuth().verifyIdToken(token),
+  getWorkspace: async uid => (await db.doc('users/' + uid).get()).data()?.workspaceLabel,
+  getDevice: async (uid, id) => (await db.doc('workspaces/' + uid + '/devices/' + id).get()).data(),
+  publish: ({topic,payload}) => new Promise((resolve,reject) => aedes.publish({
+    cmd:'publish',topic,payload:Buffer.from(JSON.stringify(payload)),qos:0,retain:false,
+  }, error => error ? reject(error) : resolve())),
+  record: (uid, entry) => db.collection('workspaces/' + uid + '/commands').add(entry),
+  emit,
+})
 const webServer = http.createServer(async (req, res) => {
   if (await setupHandler(req, res)) return
+  if (req.url === '/downlink') return downlinkHandler(req, res)
   // Live debug stream. The browser proves who it is with a Firebase ID token;
   // we verify it server-side and only ever send that uid's events.
   if (req.url.startsWith('/events')) {
@@ -1694,6 +1723,8 @@ const webServer = http.createServer(async (req, res) => {
   // treats $& and friends as backreferences, which would corrupt any changelog
   // entry that ever contains a dollar sign.
   res.end(PAGE.replace('__FIREBASE_CONFIG__', () => JSON.stringify(CFG.web).replace(/</g, '\\u003c'))
+              .replace('__EXTRA_PROFILES__', () => JSON.stringify(EXTRA_PROFILES))
+              .replace('__EXTRA_META__', () => JSON.stringify(EXTRA_META))
               .replace('__CHANGES__', () => JSON.stringify(CHANGES))
               .replace('__VERSION__', VERSION)
               .replace('__BUILD__', BUILD)
@@ -2413,12 +2444,33 @@ const PAGE = String.raw`<!doctype html>
           <div class="v"><span id="b-user"></span><button class="copy" data-copy="b-user">Copy</button></div></div>
         <div class="full"><div class="k">Password</div>
           <div class="v"><span id="b-pass"></span><button class="copy" id="b-show">Show</button></div></div>
-        <div class="full"><div class="k">Uplink topic &mdash; the only one you set</div>
+        <div class="full"><div class="k">Uplink topic</div>
           <div class="v"><span id="b-topic"></span><button class="copy" data-copy="b-topic">Copy</button></div></div>
       </div>
       <p>That one topic carries <strong>every</strong> device. You don't set a topic per sensor
          &mdash; the gateway puts each device's EUI in the payload, and the broker files the
          reading under the right device.</p>
+    </div>
+
+    <div class="panel">
+      <h3>Send a device command</h3>
+      <p>For gateways using Milesight Embedded Network Server. Configure its Downlink Data topic
+         to match the template below. Class A devices receive queued commands after an uplink.</p>
+      <div class="kv">
+        <label>Device<select id="cmd-device" aria-label="Command target device"></select></label>
+        <label>Command<select id="cmd-preset"><option value="">Custom hexadecimal payload</option></select></label>
+        <label class="full">Downlink topic template<input id="cmd-topic" placeholder="workspace_db/downlink/$deveui"></label>
+        <label>FPort<input id="cmd-port" type="number" min="1" max="223" value="85"></label>
+        <label><input id="cmd-confirmed" type="checkbox" checked> Request LoRaWAN confirmation</label>
+        <label class="full">Command bytes (hex)<input id="cmd-hex" placeholder="Use the command from this device's manual" maxlength="160"></label>
+      </div>
+      <p>Use commands documented for the exact device model and firmware. New sensor profiles
+         require decoded JSON from the gateway payload codec.</p>
+      <pre id="cmd-preview" style="white-space:pre-wrap;overflow-wrap:anywhere">Choose a device and enter a command to preview its MQTT message.</pre>
+      <button id="cmd-send" type="button" disabled>Publish command</button>
+      <p id="cmd-status" role="status"></p>
+      <h3>Recent commands</h3>
+      <div id="cmd-history">No commands sent yet.</div>
     </div>
 
     <div class="panel">
@@ -2842,6 +2894,7 @@ var META = {
   dwell_time_avg:{u:'',dp:0,n:'Average dwell time'},
   dwell_time_max:{u:'',dp:0,n:'Longest dwell time'}
 }
+Object.assign(META, __EXTRA_META__)
 
 // Gateway metadata, not measurements. The server strips these on write, but a
 // value an older build already stored sits in the database until that device's
@@ -2863,7 +2916,8 @@ function titleise(key){
   return String(key).replace(/_/g,' ').replace(/^./,function(c){return c.toUpperCase()})
 }
 
-function meta(key){
+function meta(key,type){
+  if(key==='pressure'&&type==='em500-pp')return {u:'kPa',dp:0,n:'Pipe pressure'}
   var m=META[key]
   if(m)return m
   var r=/^region_(\d{1,2})$/.exec(key)
@@ -2896,6 +2950,8 @@ var MODELS = {
   'vs121':'Milesight VS121 (Workplace Occupancy)',
   'unknown':'Unrecognised device'
 }
+var extraProfiles = __EXTRA_PROFILES__
+Object.keys(extraProfiles).forEach(function(key){SHORT[key]=extraProfiles[key].short;MODELS[key]=extraProfiles[key].label})
 
 var $ = function (id) { return document.getElementById(id) }
 function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
@@ -3323,6 +3379,10 @@ onAuthStateChanged(auth,function(user){
 })
 
 async function start(uid){
+  unsubs.push(onSnapshot(query(collection(fs,'workspaces',uid,'commands'),orderBy('at','desc'),limit(20)),function(snap){
+    var rows=[];snap.forEach(function(d){rows.push(d.data())})
+    $('cmd-history').innerHTML=rows.length?rows.map(function(row){return '<p><strong>'+esc((devices[row.deviceId]||{}).name||row.eui)+'</strong> · '+esc(row.status)+' · '+esc(new Date(row.at).toLocaleString())+'<br><code>'+esc(row.topic)+'</code></p>'}).join(''):'No commands sent yet.'
+  },function(){ $('cmd-history').textContent='Command history unavailable. Check deployed Firestore rules.' }))
   // Watch the profile, don't read it once. onAuthStateChanged fires the
   // instant the account is created - BEFORE the transaction that writes
   // users/{uid} has committed - so a one-shot getDoc here races it and comes
@@ -3463,7 +3523,7 @@ function render(){
     metrics+=keys.length
 
     var rows=keys.map(function(key){
-      var m=meta(key),v=tel.values[key],val,cls='mval'
+      var m=meta(key,dev.type),v=tel.values[key],val,cls='mval'
       if(m.bool){
         var on=v===1||v==='on'||v===true||v==='open'
         val='<span class="pill '+(on?'on':'off')+'">'+(on?'ON':'OFF')+'</span>'
@@ -3525,6 +3585,7 @@ function render(){
 }
 
 function renderDevices(){
+  renderCommandDevices()
   var ids=Object.keys(devices)
   if(!ids.length){
     $('devs').innerHTML='<div class="empty">Nothing has published yet. Point your gateway at '+
@@ -3938,6 +3999,45 @@ function renderSettings(){
   $('b-show').textContent=showPass?'Hide':'Show'
 }
 
+// -------- MQTT device commands --------
+var commandBusy=false
+function renderCommandDevices(){
+  var select=$('cmd-device'),current=select.value
+  var options=Object.keys(devices).map(function(id){return '<option value="'+esc(id)+'">'+esc(devices[id].name||id)+'</option>'}).join('')
+  if(select.innerHTML!==options){select.innerHTML=options;if(devices[current])select.value=current;commandPresets()}
+  if(!$('cmd-topic').value&&myWs)$('cmd-topic').value=myWs+'/downlink/$deveui'
+  commandPreview()
+}
+function commandPresets(){
+  var dev=devices[$('cmd-device').value]||{}
+  $('cmd-preset').innerHTML='<option value="">Custom hexadecimal payload</option>'+(dev.type==='uc300'?[
+    ['0700ff','DO1 low'],['0701ff','DO1 high'],['0800ff','DO2 low'],['0801ff','DO2 high']
+  ].map(function(p){return '<option value="'+p[0]+'">'+p[1]+'</option>'}).join(''):'')
+  $('cmd-hex').value=''
+}
+function commandBody(){return {deviceId:$('cmd-device').value,topicTemplate:$('cmd-topic').value.trim(),fport:Number($('cmd-port').value),confirmed:$('cmd-confirmed').checked,hex:$('cmd-hex').value.replace(/\s/g,'')}}
+function commandPreview(){
+  var body=commandBody(),dev=devices[body.deviceId],valid=dev&&/^[a-fA-F0-9]{16}$/.test(dev.eui||'')&&/^(?:[a-fA-F0-9]{2}){1,51}$/.test(body.hex)&&Number.isInteger(body.fport)&&body.fport>=1&&body.fport<=223&&body.topicTemplate.startsWith(myWs+'/')&&body.topicTemplate.includes('$deveui')&&!/[#+\s]/.test(body.topicTemplate)
+  $('cmd-send').disabled=!valid||commandBusy
+  $('cmd-preview').textContent=valid?JSON.stringify({topic:body.topicTemplate.replace(/\$deveui/g,dev.eui.toLowerCase()),payload:{confirmed:body.confirmed,fport:body.fport,data:btoa(body.hex.match(/../g).map(function(h){return String.fromCharCode(parseInt(h,16))}).join(''))}},null,2):'Choose a device, a workspace topic containing $deveui, and 1–51 bytes of hexadecimal data.'
+}
+$('cmd-device').onchange=function(){commandPresets();commandPreview()}
+$('cmd-preset').onchange=function(){$('cmd-hex').value=this.value;commandPreview()}
+;['cmd-topic','cmd-port','cmd-confirmed','cmd-hex'].forEach(function(id){$(id).addEventListener('input',commandPreview)})
+$('cmd-send').onclick=async function(){
+  if(commandBusy)return
+  var command=commandBody()
+  commandBusy=true;commandPreview();$('cmd-status').textContent='Publishing…'
+  try{
+    var token=await auth.currentUser.getIdToken()
+    var response=await fetch('/downlink',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+token},body:JSON.stringify(command),signal:AbortSignal.timeout(20000)})
+    var result=await response.json()
+    if(!response.ok||!result.ok)throw new Error(result.error||'Publication failed')
+    $('cmd-status').textContent=result.detail+(result.historySaved===false?' Command history update failed.':'')
+  }catch(e){$('cmd-status').textContent=e.name==='TimeoutError'?'Request timed out. Check command history before retrying.':e.message}
+  finally{commandBusy=false;commandPreview()}
+}
+
 // -------- device rename + model override --------
 //
 // The model is inferred from the payload's field shape, which is a good guess
@@ -4021,7 +4121,7 @@ function openDevice(devId,key){
 }
 
 function paintSheetHead(){
-  var dev=devices[chart.dev]||{},m=meta(chart.key)
+  var dev=devices[chart.dev]||{},m=meta(chart.key,dev.type)
   $('sheet').querySelector('.sheet-card').style.setProperty('--m',mvar(chart.key))
   $('sh-title').textContent=m.n
   $('sh-sub').textContent=(dev.name||chart.dev)+' · '+(SHORT[dev.type]||dev.type||'')+
@@ -4066,7 +4166,7 @@ async function loadChart(){
 }
 
 function drawChart(){
-  var m=meta(chart.key), rows=chart.rows
+  var m=meta(chart.key,(devices[chart.dev]||{}).type), rows=chart.rows
   if(!rows.length){
     $('sh-plot').innerHTML='<p class="sheet-sub">No readings stored in this period yet.</p>'
     $('sh-figs').innerHTML=''
@@ -4164,7 +4264,7 @@ function wireHover(px,py,rows,m,W,H){
 
 function chartCsv(){
   if(chart.busy||!chart.rows.length)return
-  var m=meta(chart.key),dev=devices[chart.dev]||{}
+  var dev=devices[chart.dev]||{},m=meta(chart.key,dev.type)
   var lines=['timestamp_ms,iso8601,'+chart.key+(m.u?'_'+m.u.replace(/[^\w]/g,''):'')]
   chart.rows.forEach(function(r){lines.push(r[0]+','+new Date(r[0]).toISOString()+','+r[1])})
   var blob=new Blob([lines.join('\n')],{type:'text/csv'})
