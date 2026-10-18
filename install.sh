@@ -17,7 +17,8 @@ fi
 
 mkdir -p "$DIR/data"
 cd "$DIR"
-curl -fsSL "$REPO_RAW/docker-compose.yml" -o docker-compose.yml
+curl -fsSL "https://github.com/dineshpalsingh1989/milesight-dashboard/archive/refs/heads/main.tar.gz" \
+  | tar -xz --strip-components=1
 
 if [ ! -f data/.env ]; then
   TOKEN="$(head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')"
@@ -26,8 +27,12 @@ if [ ! -f data/.env ]; then
 fi
 TOKEN="$(sed -n 's/^FIREBASE_SETUP_TOKEN=//p' data/.env | head -n1)"
 
-docker compose pull
-docker compose up -d
+# Use the published image when available, otherwise build from the source just downloaded
+if docker compose pull -q 2>/dev/null; then
+  docker compose up -d
+else
+  docker compose up -d --build
+fi
 
 IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
 IP="${IP:-localhost}"
@@ -44,5 +49,5 @@ First run: copy your Firebase service-account JSON to
 then open the setup page, enter your Firebase web settings, test, save,
 and run:  cd $DIR && docker compose restart
 
-Update later with:  cd $DIR && docker compose pull && docker compose up -d
+Update later by re-running the install command.
 EOF

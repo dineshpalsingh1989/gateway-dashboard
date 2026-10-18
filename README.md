@@ -41,6 +41,18 @@ Unrecognised devices are still stored, under a generic `value` metric.
 
 ## Quick start
 
+### One-command install (Linux, Docker)
+
+Requires [Docker](https://docs.docker.com/engine/install/) with Compose v2 and your own Firebase project.
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/dineshpalsingh1989/milesight-dashboard/main/install.sh | sh
+```
+
+This installs to `~/milesight-dashboard`, pulls the image from GitHub Packages, starts it, and prints the setup URL and token. Put your Firebase service-account JSON at `~/milesight-dashboard/data/serviceAccountKey.json`, finish the setup page, then run `docker compose restart`. All state is kept in `~/milesight-dashboard/data`. Update with `docker compose pull && docker compose up -d`.
+
+### From source
+
 Requires Node.js 18 or later and a Firebase project.
 
 1. `npm install`

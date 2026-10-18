@@ -1,5 +1,6 @@
 services:
   milesight-dashboard:
+    build: .
     image: ghcr.io/dineshpalsingh1989/milesight-dashboard:latest
     container_name: milesight-dashboard
     restart: unless-stopped
