@@ -51,13 +51,17 @@ test('Firestore denies cross-tenant access and secret reads', {
       body: fields ? JSON.stringify({ fields }) : undefined,
     })
   }
-  for (const path of ['workspaces/alice/telemetry/sensor', 'workspaces/alice/secrets/telegram',
+  for (const path of ['workspaces/alice/telemetry/sensor', 'workspaces/alice/commands/command', 'workspaces/alice/secrets/telegram',
     'brokerUsers/alice-broker', 'memberIndex/alice@example.com']) {
     const seeded = await request(path, 'owner', 'PATCH', { value: { stringValue: 'private' } })
     assert.equal(seeded.ok, true, await seeded.text())
   }
   assert.equal((await request('workspaces/alice/telemetry/sensor', token('alice'))).status, 200)
   assert.equal((await request('workspaces/alice/telemetry/sensor', token('bob'))).status, 403)
+  assert.equal((await request('workspaces/alice/commands/command', token('alice'))).status, 200)
+  assert.equal((await request('workspaces/alice/commands/command', token('bob'))).status, 403)
+  assert.equal((await request('workspaces/alice/commands/command', token('alice'), 'PATCH',
+    {status:{stringValue:'delivered'}})).status, 403)
   assert.equal((await request('workspaces/alice/secrets/telegram', token('alice'))).status, 403)
   assert.equal((await request('brokerUsers/alice-broker', token('alice'))).status, 403)
   assert.equal((await request('memberIndex/alice@example.com', token('alice'))).status, 200)

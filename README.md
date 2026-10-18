@@ -10,6 +10,10 @@
 
 A self-hosted MQTT broker and live dashboard for Milesight gateways, with Firebase Firestore storage and an optional Telegram assistant.
 
+The latest maintenance update adds a 24-device local demo, 17 additional sensor
+profiles, and authenticated MQTT downlink controls with command history.
+See [CHANGELOG.md](CHANGELOG.md) for changes, validation, and deployment requirements.
+
 ![Architecture](docs/architecture.svg)
 
 The gateway publishes to the server's MQTT broker. The server decodes readings and writes them to Firestore; the signed-in dashboard reads live data and history through Firebase.
@@ -78,6 +82,42 @@ For Telegram, enter your bot token and Gemini API key in Settings, run their tes
 Each gateway uses its workspace MQTT credentials and topic. Owners use Firebase sign-in for dashboard access. Members added by email use the Telegram assistant; membership alone does not grant the owner's dashboard or broker credentials.
 
 ## Run directly with Node.js
+
+To explore the dashboard with sample sensors and history, run `npm run demo`
+and open `http://localhost:8081`. This isolated preview requires no Firebase
+configuration. Edits are temporary, and external services are simulated.
+The demo includes 24 devices covering leak detection, pulse metering, tank
+distance and water level, soil, pressure, current, people counting, temperature,
+tilt, weather, and a UC300 controller. In Settings, select the UC300 to try
+documented digital-output commands; demo commands are simulated.
+
+### Additional sensors and two-way MQTT
+
+Additional named profiles: EM300-SLD/ZLD/MLD/DI, EM400-UDL, EM500-SWL/SMTC/PP,
+CT101/103/301, VS133/125, TS301/302, EM320-TILT, and WTS506.
+Use Milesight's official per-model payload codec on the gateway and forward
+decoded JSON fields at the top level or inside `object` / `objectJSON`.
+Set `deviceProfileName` to the model, include `devEUI`, or select the model in
+Settings. These additional profiles do not add model-specific raw decoding.
+Field names and units should match `sensor-profiles.js`; adapt gateway codec
+output if required. The pipe-pressure profile uses kPa; ambient pressure uses hPa.
+
+For direct downlinks, enable the gateway's **Embedded Network Server** and set
+its MQTT **Downlink Data** topic to `YOUR_WORKSPACE_db/downlink/$deveui`.
+In Settings, choose a device, match that topic template, and review the message
+before selecting **Publish command**. Custom templates must remain within the
+workspace namespace and contain `$deveui`. The dashboard converts 1–51 bytes of
+hexadecimal command data to Base64 and publishes non-retained MQTT JSON with
+`confirmed`, `fport`, and `data`. Regional radio limits may require shorter commands.
+UC300 DO1/DO2 presets follow [Milesight's MQTT control guide](https://support.milesight-iot.com/support/solutions/articles/73000514114-how-to-remotely-control-devices-via-mqtt-on-milesight-gateway).
+Other devices use custom commands from their exact model/firmware manual.
+
+Commands require a Firebase owner token and a device in that owner's workspace.
+Deploy the updated Firestore rules to read the server-written command history.
+`published` means accepted by the broker, **not** gateway receipt or sensor
+execution. ACK/error notification correlation is not implemented. Class A
+devices generally receive queued downlinks after their next uplink. External
+network servers such as ChirpStack need a separate integration.
 
 Use Node.js 22 or 24, which are checked in CI.
 

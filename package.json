@@ -5,8 +5,9 @@
   "type": "module",
   "main": "milesight.js",
   "scripts": {
+    "demo": "node demo.js",
     "start": "node milesight.js",
-    "check": "node --check milesight.js && node --check firebase-setup.js && node --check runtime.js",
+    "check": "node --check milesight.js && node --check firebase-setup.js && node --check runtime.js && node --check downlink.js && node --check sensor-profiles.js && node --check demo.js && node --check demo-sdk.js && node --check demo-data.js",
     "test": "node --test"
   },
   "engines": {

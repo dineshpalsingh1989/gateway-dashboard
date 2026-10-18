@@ -45,6 +45,10 @@ service cloud.firestore {
       allow read: if owner(uid);
       match /readings/{reading} { allow read: if owner(uid); }
     }
+    match /workspaces/{uid}/commands/{command} {
+      allow read: if owner(uid);
+      // Command records are written only by the authenticated server endpoint.
+    }
     match /workspaces/{uid}/settings/{setting} {
       allow read: if owner(uid);
       allow write: if owner(uid) && setting in
