@@ -1,12 +1,12 @@
 {
   "name": "milesight-dashboard",
-  "version": "2.3.0",
-  "description": "Single-file MQTT broker, web dashboard and Firestore storage for Milesight gateways",
+  "version": "2.4.0",
+  "description": "MQTT broker, web dashboard, Firebase setup and Firestore storage for Milesight gateways",
   "type": "module",
   "main": "milesight.js",
   "scripts": {
     "start": "node milesight.js",
-    "check": "node --check milesight.js",
+    "check": "node --check milesight.js && node --check firebase-setup.js",
     "test": "node --test"
   },
   "engines": {

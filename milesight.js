@@ -4,7 +4,7 @@
 //
 //  Run it:   node milesight.js
 //
-//  This single file is three things at once:
+//  This entry point runs three services:
 //
 //    1. An MQTT BROKER on port 1883. Your Milesight gateway connects here.
 //       Every account gets its own username, password and topic namespace,
@@ -14,8 +14,8 @@
 //    3. The FIRESTORE glue. Uplinks land in the database; the page reads them
 //       back live.
 //
-//  The only thing outside this file is the Firebase service account key,
-//  because a private credential does not belong in source code.
+//  Firebase settings are managed by firebase-setup.js and firebase-setup.html.
+//  Private credentials and saved configuration stay outside source control.
 //
 // ---------------------------------------------------------------------------
 
@@ -29,6 +29,7 @@ import Aedes from 'aedes'
 import { initializeApp, cert } from 'firebase-admin/app'
 import { getFirestore, FieldValue } from 'firebase-admin/firestore'
 import { getAuth } from 'firebase-admin/auth'
+import { readSavedConfig, createSetupHandler, startSetupServer } from './firebase-setup.js'
 
 // ===========================================================================
 //  VERSION
@@ -38,12 +39,13 @@ import { getAuth } from 'firebase-admin/auth'
 // /health, and in the startup log, so "which build is actually running?" is
 // never a guess again. BUILD is the date the version was cut.
 
-const VERSION = '2.3.0'
+const VERSION = '2.4.0'
 const BUILD = '2026-10-18'
 
 // What changed, newest first. Kept here so the running server can tell you
 // its own history - no changelog file to lose track of.
 const CHANGES = [
+  ['2.4.0', 'Removed the bundled Firebase project configuration. Added a protected Firebase setup page with configuration import, connection tests, local saving, and first-run setup before sign-in.'],
   ['2.3.0', 'Added deployable Firestore access rules and authorization regression tests. History now keeps the latest selection, labels the 500-reading limit, disables empty or loading exports, and offers retry on failure. Hardened HTML escaping and self-test requests, refreshed verified email tokens, and cleaned up debug refresh timers.'],
   ['2.2.1', 'Fixed /start asking an already signed-in person for their email, which then treated the address they typed as a question about their sensors. A bare email or code from someone already signed in is now answered directly instead of being sent to Gemini.'],
   ['2.2.0', 'Sign up and sign in entirely from Telegram: the bot asks for your email, then the code your administrator gave you, then a password, and creates the Firebase account. Sessions expire after a period the admin chooses in Settings, after which the bot asks for the password again. Password messages are deleted from the chat the moment they are read, are never written to the debug log, and are checked against Firebase rather than stored.'],
@@ -78,29 +80,21 @@ const CHANGES = [
 //  these values ships inside every visitor's JavaScript by design. The private
 //  credential is the service account key, which lives outside this file.
 //
-//  Edit here, or override any line from .env with the matching VITE_FIREBASE_*
-//  variable - .env wins when it is set, so an existing deployment keeps
-//  working unchanged.
+//  Configure at /setup. Saved values stay in the ignored firebase.local.json.
+//  VITE_FIREBASE_* environment variables override saved values.
 //
-//  If sign-in ever fails with "api-key-not-found", the key below has been
-//  deleted or regenerated in Google Cloud. Make a new one at
+//  If sign-in ever fails with "api-key-not-found", the configured key may have
+//  been deleted or regenerated in Google Cloud. Make a new one at
 //  console.cloud.google.com > APIs & Services > Credentials > + Create
-//  credentials > API key, and put it here.
+//  credentials > API key, and update it in /setup.
 //
 //  Do NOT copy it from Firebase console > Your apps: that screen shows the key
 //  the app was registered with and never re-checks it, so after a deletion it
 //  keeps handing you the dead one. The server checks this key against Google
 //  at startup and reports the result on the login page.
 
-const FIREBASE_WEB = {
-  apiKey: 'REMOVED',
-  authDomain: 'wilcoxon-327d7.firebaseapp.com',
-  databaseURL: 'https://wilcoxon-327d7-default-rtdb.firebaseio.com',
-  projectId: 'wilcoxon-327d7',
-  storageBucket: 'wilcoxon-327d7.firebasestorage.app',
-  messagingSenderId: '909182770811',
-  appId: '1:909182770811:web:c16fb4e319acabf028ccde',
-}
+const SAVED_FIREBASE = readSavedConfig()
+const FIREBASE_WEB = SAVED_FIREBASE.web
 
 // ===========================================================================
 //  CONFIG
@@ -116,12 +110,12 @@ const CFG = {
     // hostname that resolves nowhere and looks like it should work.
     return (!d || d === 'broker.example.com' || d === 'example.com') ? '' : d
   })(),
-  keyPath: process.env.FIREBASE_SERVICE_ACCOUNT_PATH || '/etc/milesight/serviceAccountKey.json',
+  keyPath: process.env.FIREBASE_SERVICE_ACCOUNT_PATH || SAVED_FIREBASE.keyPath,
   tlsCert: process.env.TLS_CERT_PATH,
   tlsKey: process.env.TLS_KEY_PATH,
   tlsPort: Number(process.env.MQTT_TLS_PORT) || 8883,
   // .env wins per value, so an existing deployment behaves exactly as before
-  // and an empty variable does not blank out a good built-in default.
+  // and an empty variable does not blank out a saved value.
   web: {
     apiKey: process.env.VITE_FIREBASE_API_KEY || FIREBASE_WEB.apiKey,
     authDomain: process.env.VITE_FIREBASE_AUTH_DOMAIN || FIREBASE_WEB.authDomain,
@@ -133,16 +127,10 @@ const CFG = {
   },
 }
 
-if (!existsSync(CFG.keyPath)) {
-  console.error('\n  No Firebase service account key at: ' + CFG.keyPath)
-  console.error('  Firebase console -> Project settings -> Service accounts')
-  console.error('  -> Generate new private key, then save the JSON there.\n')
-  process.exit(1)
-}
-if (!CFG.web.apiKey) {
-  console.error('\n  No Firebase web apiKey. Set one in FIREBASE_WEB near the top of this file,')
-  console.error('  or as VITE_FIREBASE_API_KEY in .env. The page cannot sign anyone in without it.\n')
-  process.exit(1)
+if (!existsSync(CFG.keyPath) || !CFG.web.apiKey || !CFG.web.projectId || !CFG.web.authDomain || !CFG.web.appId) {
+  startSetupServer(CFG.webPort, { web: CFG.web, keyPath: CFG.keyPath })
+  // Keep the setup server available without initializing Firebase or the broker.
+  await new Promise(() => {})
 }
 
 // What address should a gateway dial to reach this broker?
@@ -173,7 +161,15 @@ const SERVER_HOST = detectHost()
 // The Admin SDK BYPASSES security rules - it is the server, so it is trusted.
 // That is how the broker reads brokerUsers/{username}, whose reads are denied
 // to every browser client. Browsers may create their own broker credentials.
-initializeApp({ credential: cert(JSON.parse(readFileSync(CFG.keyPath, 'utf8'))) })
+try {
+  const serviceAccount = JSON.parse(readFileSync(CFG.keyPath, 'utf8'))
+  if (serviceAccount.project_id !== CFG.web.projectId) throw new Error('Firebase project mismatch')
+  initializeApp({ credential: cert(serviceAccount), projectId: CFG.web.projectId })
+} catch {
+  console.error('[setup] Invalid service-account file or project mismatch. Review Firebase settings.')
+  startSetupServer(CFG.webPort, { web: CFG.web, keyPath: CFG.keyPath })
+  await new Promise(() => {})
+}
 const db = getFirestore()
 
 // ===========================================================================
@@ -1493,6 +1489,7 @@ async function checkWebKey() {
       'https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=' +
       encodeURIComponent(CFG.web.apiKey), {
         method: 'POST',
+        signal: AbortSignal.timeout(10000),
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ idToken: 'probe' }),
       })
@@ -1508,18 +1505,21 @@ async function checkWebKey() {
       // circle pasting the same broken value back in.
       health.webKeyError = 'Google does not recognise this dashboard\'s Firebase key, so nobody ' +
         'can sign in. Create a fresh one at console.cloud.google.com > APIs & Services > ' +
-        'Credentials > Create credentials > API key, put it in .env as VITE_FIREBASE_API_KEY, ' +
+        'Credentials > Create credentials > API key, update it at /setup (or in VITE_FIREBASE_API_KEY), ' +
         'and restart. Note the key shown in the Firebase console under Your apps may be stale - ' +
         'it is not re-checked against Google.'
     } else if (/PERMISSION_DENIED|forbidden/i.test(msg) || r.status === 403) {
       health.webKey = 'invalid'
       health.webKeyError = 'Google refused this dashboard\'s Firebase key. It may have an HTTP ' +
         'referrer restriction on it, or the Identity Toolkit API may be disabled for the project.'
-    } else {
+    } else if (r.status === 400 && /^(INVALID_ID_TOKEN|MISSING_ID_TOKEN)(\s|$)/.test(msg)) {
       // Rejecting our deliberately bogus token is the CORRECT answer: it means
       // the key itself got through and was accepted as a key.
       health.webKey = 'ok'
       health.webKeyError = ''
+    } else {
+      health.webKey = 'unknown'
+      health.webKeyError = 'Could not confirm the Firebase web key. Run the connection test at /setup.'
     }
   } catch (e) {
     // Could not reach Google at all - that is a network problem, not a bad key,
@@ -1551,7 +1551,9 @@ setInterval(checkFirestore, 60000)
 //  THE WEB SERVER
 // ===========================================================================
 
-http.createServer((req, res) => {
+const setupHandler = createSetupHandler({ web: CFG.web, keyPath: CFG.keyPath })
+http.createServer(async (req, res) => {
+  if (await setupHandler(req, res)) return
   // Live debug stream. The browser proves who it is with a Firebase ID token;
   // we verify it server-side and only ever send that uid's events.
   if (req.url.startsWith('/events')) {
@@ -1683,7 +1685,7 @@ http.createServer((req, res) => {
   // Function replacements, not string ones: a literal replacement string
   // treats $& and friends as backreferences, which would corrupt any changelog
   // entry that ever contains a dollar sign.
-  res.end(PAGE.replace('__FIREBASE_CONFIG__', () => JSON.stringify(CFG.web))
+  res.end(PAGE.replace('__FIREBASE_CONFIG__', () => JSON.stringify(CFG.web).replace(/</g, '\\u003c'))
               .replace('__CHANGES__', () => JSON.stringify(CHANGES))
               .replace('__VERSION__', VERSION)
               .replace('__BUILD__', BUILD)
@@ -2405,6 +2407,7 @@ const PAGE = String.raw`<!doctype html>
     <div class="panel">
       <h3>Firebase</h3>
       <p>Where your data is going, and whether it is getting there.</p>
+      <p><a href="/setup">Configure Firebase &amp; test connection</a> · Requires the server administrator setup token.</p>
     <div class="leds">
       <span class="led" data-led="srv"><i></i><span data-ledtext="srv">Server</span></span>
       <span class="led" data-led="mq"><i></i><span data-ledtext="mq">Broker</span></span>

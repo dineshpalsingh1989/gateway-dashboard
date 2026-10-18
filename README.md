@@ -1,12 +1,14 @@
+# Milesight Dashboard
+
 <p align="center"><img src="docs/banner.svg" alt="Milesight Dashboard" width="100%"></p>
 
 ![Node](https://img.shields.io/badge/node-%3E%3D18-339933?logo=node.js&logoColor=white)
 ![MQTT](https://img.shields.io/badge/MQTT-broker-660066?logo=mqtt&logoColor=white)
 ![Firebase](https://img.shields.io/badge/Firebase-Firestore-FFCA28?logo=firebase&logoColor=black)
 
-A self-hosted, single-file platform for **Milesight IoT sensors** (LoRaWAN) connected through a Milesight gateway. It runs an MQTT broker, serves a live web dashboard and stores readings in Firebase Firestore, with no build step.
+A self-hosted platform for **Milesight IoT sensors** (LoRaWAN) connected through a Milesight gateway. It runs an MQTT broker, serves a live web dashboard and stores readings in Firebase Firestore, with no build step.
 
-Everything lives in [milesight.js](./milesight.js).
+The services live in [milesight.js](./milesight.js), with a standalone Firebase setup page in [firebase-setup.html](./firebase-setup.html) and its server in [firebase-setup.js](./firebase-setup.js).
 
 ## Features
 
@@ -42,10 +44,15 @@ Unrecognised devices are still stored, under a generic `value` metric.
 Requires Node.js 18 or later and a Firebase project.
 
 1. `npm install`
-2. Copy `.env.example` to `.env` and adjust.
-3. Put your Firebase service account key at the path in `FIREBASE_SERVICE_ACCOUNT_PATH` (never commit it).
-4. `npm start`
-5. Open `http://localhost:8080` and register an account.
+2. Optionally copy `.env.example` to `.env` to adjust ports and server settings.
+3. Run `npm start`, then open `http://localhost:8080/setup`.
+4. Enter the administrator setup token printed in the server console and click **Unlock & load settings**.
+5. Enter your Firebase web configuration, or paste its JSON object. No Firebase project or key is bundled with the source.
+6. Put your private service-account JSON file on the server (never commit it), and enter its file path. The default is `./serviceAccountKey.json`.
+7. Click **Test Firebase connection**, review each result, then **Save configuration**.
+8. Restart the server, deploy the Firestore rules below, then open the dashboard and register an account.
+
+Missing or invalid Firebase configuration opens setup mode; the broker stays offline until Firebase is configured. To make later changes, use **Settings → Firebase → Configure Firebase & test connection**, or visit `/setup` directly. Use HTTPS when accessing setup on a remote server.
 
 ### Connect your Milesight gateway
 
@@ -67,9 +74,16 @@ Uplinks published by the gateway are decoded, stored and shown live.
 | `FIREBASE_SERVICE_ACCOUNT_PATH` | `./serviceAccountKey.json` | Admin SDK key |
 | `TLS_CERT_PATH`, `TLS_KEY_PATH` | unset | Enable MQTT over TLS |
 | `MQTT_TLS_PORT` | `8883` | TLS MQTT port |
-| `VITE_FIREBASE_*` | built-in block | Override the Firebase web config |
+| `VITE_FIREBASE_*` | saved setup values | Override the Firebase web config |
+| `FIREBASE_SETUP_TOKEN` | generated each startup | Administrator token for `/setup` |
 
 ## Firebase setup
+
+Settings are saved to the ignored `firebase.local.json` in the server's working directory. Preserve this file and your service-account file across deployments. The private key remains in the service-account file and is never returned to the browser. `VITE_FIREBASE_*` and `FIREBASE_SERVICE_ACCOUNT_PATH` environment variables take precedence over saved values; the page lists active overrides. Set `FIREBASE_SETUP_TOKEN` in `.env` to keep the administrator token stable across restarts.
+
+The connection test uses the values entered in the form. It checks Authentication API-key acceptance, service-account project matching, and Firestore write/read/delete access using a temporary `_setupProbes` document. Failed cleanup is reported as a failed test; remove any leftover probe in Firebase Console if necessary. Testing and saving do not change the running configuration until you restart.
+
+The server test cannot verify browser security rules, enabled sign-in providers, authorized domains, or whether the web API key belongs to the entered project. Complete the checklist on the page and verify sign-in after restarting. See Firebase's [Admin SDK setup](https://firebase.google.com/docs/admin/setup) and [Authentication REST API](https://firebase.google.com/docs/reference/rest/auth) for the separate server credential and web key.
 
 Enable Email/Password authentication (plus any social providers you use) in Firebase Authentication, and add your dashboard hostname to the authorized domains.
 
@@ -87,10 +101,11 @@ No composite indexes are needed. The empty [firestore.indexes.json](./firestore.
 
 ```sh
 npm run check   # server syntax check
-npm test        # dashboard regression tests
+npm test        # dashboard, MQTT authorization and setup regression tests
 ```
 
 Neither needs Firebase credentials or running services.
+Setup regression tests simulate Google responses; live connection checks run from the setup page.
 
 The Firestore authorization test runs only when `FIRESTORE_EMULATOR_HOST` is set. With Java and the Firebase CLI installed:
 
