@@ -138,3 +138,7 @@ It checks owner access, cross-workspace denial, secret protection, verified emai
 - History shows up to the latest 500 readings in the selected period. Switching sensor, metric or period discards earlier pending requests.
 - The chart labels capped results, offers retry after a failed query, and enables CSV export only once readings have loaded.
 - The running version, build date and full changelog are available in the dashboard's **About** panel and at `/health`.
+
+## License
+
+[MIT](./LICENSE)
