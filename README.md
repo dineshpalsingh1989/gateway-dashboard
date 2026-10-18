@@ -1,146 +1,115 @@
-# Milesight Dashboard
-
-Current release: **V2.0** (`2.0.0`). Includes Firebase setup, connection testing, and responsive styling with automatic dark mode.
+﻿# Milesight Dashboard V2.0
 
 <p align="center"><img src="docs/banner.svg" alt="Milesight Dashboard" width="100%"></p>
 
-![Node](https://img.shields.io/badge/node-%3E%3D18-339933?logo=node.js&logoColor=white)
-![MQTT](https://img.shields.io/badge/MQTT-broker-660066?logo=mqtt&logoColor=white)
-![Firebase](https://img.shields.io/badge/Firebase-Firestore-FFCA28?logo=firebase&logoColor=black)
-
-A self-hosted platform for **Milesight IoT sensors** (LoRaWAN) connected through a Milesight gateway. It runs an MQTT broker, serves a live web dashboard and stores readings in Firebase Firestore, with no build step.
-
-The services live in [milesight.js](./milesight.js), with a standalone Firebase setup page in [firebase-setup.html](./firebase-setup.html) and its server in [firebase-setup.js](./firebase-setup.js).
-
-## Features
-
-- **Built-in MQTT broker** (port 1883, optional TLS on 8883). Each account gets its own credentials and topic namespace, checked on every connection and message.
-- **Live web dashboard** (port 8080) with real-time updates, per-sensor history charts (latest 500 readings per period) and CSV export.
-- **Automatic Milesight device recognition.** Models are detected from the gateway's device name, or from the payload shape when no name is given.
-- **Built-in Milesight payload decoder.** It decodes the raw channel/type frames, including battery, temperature, humidity, CO₂, pressure and attributes such as firmware version.
-- **Multi-user workspaces.** Owners add members by email, and invite links grant nothing on their own.
-- **Telegram assistant.** Ask about your sensors in plain language (powered by Gemini). Sign-up and sign-in happen entirely from Telegram.
-- **Storage quota management.** The oldest readings are pruned automatically before the 1 GB quota is reached.
-- **Locked-down Firestore rules.** Secrets such as bot tokens, AI keys and broker passwords can never be read from the browser.
-
-## Supported devices
-
-| Model | Type | Metrics |
-|-------|------|---------|
-| EM300-TH | Temperature & humidity | temperature, humidity, battery |
-| EM300-MCS | Door contact | magnet status, battery |
-| AM300 | Ambient monitoring | temperature, humidity, CO₂, pressure, battery |
-| WS523 | Smart plug | power, current, voltage, switch status |
-| UC300 | Controller | DI 1/2, AI 1, battery |
-| TS201 | Temperature probe | temperature, probe temperature, battery |
-| VS121 | Workplace occupancy | people count, region counts (`region_1`…`region_16`) |
-
-Unrecognised devices are still stored, under a generic `value` metric.
-
-## Architecture
+A self-hosted MQTT broker and live dashboard for Milesight gateways, with Firebase Firestore storage and an optional Telegram assistant.
 
 ![Architecture](docs/architecture.svg)
 
-## Quick start
-
-### One-command install (Linux)
+## Install on Linux
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/dineshpalsingh1989/milesight-dashboard/main/install.sh | sh
 ```
 
-The script installs Docker if it is missing, downloads the dashboard to `~/milesight-dashboard`, starts it, and prints the setup URL and token. Then:
+The installer installs Docker if needed, starts the dashboard, and prints the setup URL and administrator token. Files are installed under `~/milesight-dashboard`.
 
-1. Create a free [Firebase project](https://console.firebase.google.com/) and enable **Firestore** and **Authentication → Email/Password**.
-2. Download a service-account key (Project settings → Service accounts → Generate new private key) and save it as `~/milesight-dashboard/data/serviceAccountKey.json`.
-3. Open the printed `/setup` URL, enter the token, paste your Firebase web config, click **Test**, then **Save**.
-4. Run `cd ~/milesight-dashboard && docker compose restart`, open `http://<server-ip>:8080` and register.
-5. Point your Milesight gateway's MQTT settings at `<server-ip>` port `1883`.
+## Configure Firebase
 
-All state lives in `~/milesight-dashboard/data`. To update, re-run the install command. To stop, run `docker compose down` in that folder.
+1. Create a Firebase project and a Firestore database in Native mode.
+2. Enable **Authentication > Email/Password**. Add your dashboard hostname to Authentication's authorized domains. Enable Google or Microsoft sign-in if you plan to use them.
+3. Download a service-account JSON key from **Project settings > Service accounts**. Save it on the server as `~/milesight-dashboard/data/serviceAccountKey.json`. Keep it readable only by the container's runtime user; never commit it.
+4. Open `http://<server-ip>:8080/setup`. Use HTTPS when accessing setup remotely.
+5. Enter the administrator token printed by the installer, then select **Unlock & load settings**.
+6. Enter or import the web configuration from **Project settings > General > Your apps**. For Docker, use `./serviceAccountKey.json` as the service-account path: this resolves inside the mounted `/data` directory.
+7. Select **Test Firebase connection**, review the results, then **Save configuration**.
+8. Deploy the repository's Firestore rules using an installed, signed-in Firebase CLI. Run this from the installation directory:
 
-### From source
+   ```sh
+   firebase deploy --only firestore:rules --project YOUR_PROJECT_ID
+   ```
 
-Requires Node.js 18 or later and a Firebase project.
+9. Restart the container:
 
-1. `npm install`
-2. Optionally copy `.env.example` to `.env` to adjust ports and server settings.
-3. Run `npm start`, then open `http://localhost:8080/setup`.
-4. Enter the administrator setup token printed in the server console and click **Unlock & load settings**.
-5. Enter your Firebase web configuration, or paste its JSON object. No Firebase project or key is bundled with the source.
-6. Put your private service-account JSON file on the server (never commit it), and enter its file path. The default is `./serviceAccountKey.json`.
-7. Click **Test Firebase connection**, review each result, then **Save configuration**.
-8. Restart the server, deploy the Firestore rules below, then open the dashboard and register an account.
+   ```sh
+   cd ~/milesight-dashboard
+   docker compose restart
+   ```
 
-Missing or invalid Firebase configuration opens setup mode; the broker stays offline until Firebase is configured. To make later changes, use **Settings → Firebase → Configure Firebase & test connection**, or visit `/setup` directly. Use HTTPS when accessing setup on a remote server.
+10. Open `http://<server-ip>:8080`, register an account, and create a workspace.
 
-### Connect your Milesight gateway
+Before configuration is complete, setup remains available and MQTT stays offline. Connection tests check API-key acceptance, service-account project matching, and Firestore write/read/delete access. Browser sign-in, authorized domains, and security rules still need to be verified after restarting.
 
-In the gateway's MQTT / data-transmission settings, point it at this server:
+To change Firebase later, open **Settings > Firebase > Configure Firebase & test connection**, or visit `/setup`. Saving requires a restart to apply changes.
 
-- **Host:** this machine's address (or `BROKER_DOMAIN`)
-- **Port:** `1883` (or `8883` with TLS)
-- **Username / password:** the broker credentials created in the dashboard
+## Connect a Milesight gateway
 
-Uplinks published by the gateway are decoded, stored and shown live.
+Copy the connection details from the dashboard's Settings into your gateway's MQTT settings:
 
-## Configuration
+| Setting | Value |
+| --- | --- |
+| Host | Your server address or configured broker domain |
+| Port | `1883`, or `8883` when MQTT TLS is configured |
+| Username and password | Credentials shown for your workspace |
+| Uplink topic | The exact workspace topic shown in Settings, such as `your-workspace_db/uplink` |
 
-| Variable | Default | Purpose |
-|----------|---------|---------|
-| `MQTT_PORT` | `1883` | MQTT broker port |
-| `WEB_PORT` | `8080` | Dashboard port |
-| `BROKER_DOMAIN` | auto-detected | Hostname shown for gateway setup |
-| `FIREBASE_SERVICE_ACCOUNT_PATH` | `./serviceAccountKey.json` | Admin SDK key |
-| `TLS_CERT_PATH`, `TLS_KEY_PATH` | unset | Enable MQTT over TLS |
-| `MQTT_TLS_PORT` | `8883` | TLS MQTT port |
-| `VITE_FIREBASE_*` | saved setup values | Override the Firebase web config |
-| `FIREBASE_SETUP_TOKEN` | generated each startup | Administrator token for `/setup` |
+Incoming readings appear automatically. Use **View history** to chart up to the latest 500 stored readings in a selected period and download CSV.
 
-## Firebase setup
+For Telegram, enter your bot token and Gemini API key in Settings, run their test buttons, and save. Add members by email and issue their invitation codes from the same page.
 
-Settings are saved to the ignored `firebase.local.json` in the server's working directory. Preserve this file and your service-account file across deployments. The private key remains in the service-account file and is never returned to the browser. `VITE_FIREBASE_*` and `FIREBASE_SERVICE_ACCOUNT_PATH` environment variables take precedence over saved values; the page lists active overrides. Set `FIREBASE_SETUP_TOKEN` in `.env` to keep the administrator token stable across restarts.
+## Run directly with Node.js
 
-The connection test uses the values entered in the form. It checks Authentication API-key acceptance, service-account project matching, and Firestore write/read/delete access using a temporary `_setupProbes` document. Failed cleanup is reported as a failed test; remove any leftover probe in Firebase Console if necessary. Testing and saving do not change the running configuration until you restart.
-
-The server test cannot verify browser security rules, enabled sign-in providers, authorized domains, or whether the web API key belongs to the entered project. Complete the checklist on the page and verify sign-in after restarting. See Firebase's [Admin SDK setup](https://firebase.google.com/docs/admin/setup) and [Authentication REST API](https://firebase.google.com/docs/reference/rest/auth) for the separate server credential and web key.
-
-Enable Email/Password authentication (plus any social providers you use) in Firebase Authentication, and add your dashboard hostname to the authorized domains.
-
-The access rules in [firestore.rules](./firestore.rules) restrict dashboard data to its workspace owner. Members use the Telegram assistant and can look up only their own verified email membership. Server writes use the Admin SDK.
-
-Deploy the rules to your project:
+Use Node.js 22 or 24, which are checked in CI.
 
 ```sh
-firebase deploy --only firestore:rules --project YOUR_PROJECT_ID
+git clone https://github.com/dineshpalsingh1989/milesight-dashboard.git
+cd milesight-dashboard
+npm ci
+npm start
 ```
 
-No composite indexes are needed. The empty [firestore.indexes.json](./firestore.indexes.json) records that.
+Open `http://localhost:8080/setup` and follow the Firebase steps above. Place the service-account file in this directory, deploy the rules, then restart with `npm start` after stopping the current process.
 
-## Testing
+Optionally copy `.env.example` to `.env` before starting to customize the server.
+
+## Configuration and saved files
+
+For Docker installations, application files live in `data/`:
+
+| File | Purpose |
+| --- | --- |
+| `data/firebase.local.json` | Saved Firebase setup values |
+| `data/serviceAccountKey.json` | Private server credential |
+| `data/.env` | Application environment variables and stable setup token |
+| `.env` in the installation directory | Compose runtime user/group IDs |
+
+When running directly with Node.js, application files live in the directory where you start the server instead.
+
+Common environment variables:
+
+| Variable | Purpose |
+| --- | --- |
+| `WEB_PORT`, `MQTT_PORT`, `MQTT_TLS_PORT` | Default ports: `8080`, `1883`, `8883` |
+| `FIREBASE_SETUP_TOKEN` | Keep the administrator setup token stable across restarts |
+| `FIREBASE_SERVICE_ACCOUNT_PATH` | Override the saved service-account path |
+| `VITE_FIREBASE_*` | Override saved Firebase web configuration |
+| `BROKER_DOMAIN` | Broker domain used for tenant hostnames |
+| `TLS_CERT_PATH`, `TLS_KEY_PATH` | Enable MQTT TLS using certificate and key files |
+
+Environment variables override saved settings. Changing container ports also requires updating the published ports in `docker-compose.yml`. TLS files must be accessible inside the container.
+
+Containers run as a non-root user. For manual Compose installations, create `data/` first and set `MILESIGHT_UID` and `MILESIGHT_GID` in the installation directory's `.env` to its owner's non-root numeric IDs. The installer configures these automatically; root installations use UID/GID 1000. Service-account files added afterward must be readable by that runtime user.
+
+## Update, logs, and backups
+
+Run these commands from `~/milesight-dashboard`:
 
 ```sh
-npm run check   # server syntax check
-npm test        # dashboard, MQTT authorization and setup regression tests
+docker compose logs --tail 100 -f  # View logs; setup tokens may appear here
+docker compose restart           # Apply saved configuration
+docker compose down              # Stop the dashboard
 ```
 
-Neither needs Firebase credentials or running services.
-Setup regression tests simulate Google responses; live connection checks run from the setup page.
+To update, re-run the installation command. Back up `data/` and the installation directory's `.env` securely before updating. Sensor readings live in Firestore and require a separate Firestore backup or export.
 
-The Firestore authorization test runs only when `FIRESTORE_EMULATOR_HOST` is set. With Java and the Firebase CLI installed:
-
-```sh
-firebase emulators:exec --only firestore --project demo-milesight "npm test"
-```
-
-It checks owner access, cross-workspace denial, secret protection, verified email lookup and rejection of forged telemetry. It writes fixture documents, so use a dedicated local emulator. It never touches production. Run it before deploying rules.
-
-## Notes
-
-- History shows up to the latest 500 readings in the selected period. Switching sensor, metric or period discards earlier pending requests.
-- The chart labels capped results, offers retry after a failed query, and enables CSV export only once readings have loaded.
-- The running version, build date and full changelog are available in the dashboard's **About** panel and at `/health`.
-
-## License
-
-[MIT](./LICENSE)
+The dashboard's About panel and `/health` report the running version and service status after setup is complete.
