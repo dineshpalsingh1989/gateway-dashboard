@@ -1,17 +1,10 @@
 // Local, isolated preview of the real dashboard. No Firebase or MQTT services.
 import http from 'node:http'
-import { readFileSync } from 'node:fs'
-import { EXTRA_PROFILES, EXTRA_META } from './sensor-profiles.js'
+import { buildDemoPage } from './demo-page.js'
 import { DEMO_SAMPLES, demoEui } from './demo-data.js'
 import { createDownlinkHandler } from './downlink.js'
 
-const source = readFileSync(new URL('./milesight.js', import.meta.url), 'utf8')
-const marker = 'const PAGE = String.raw`'
-let page = source.slice(source.indexOf(marker) + marker.length, source.lastIndexOf('</html>`') + 7)
-page = page.replace(/import \{ initializeApp \} from[^]*?from 'https:\/\/www.gstatic.com\/firebasejs\/10.12.2\/firebase-firestore.js'/, readFileSync(new URL('./demo-sdk.js', import.meta.url), 'utf8'))
-page = page.replace('__EXTRA_PROFILES__',()=>JSON.stringify(EXTRA_PROFILES)).replace('__EXTRA_META__',()=>JSON.stringify(EXTRA_META)).replace('__DEMO_SAMPLES__',()=>JSON.stringify(DEMO_SAMPLES))
-for (const [key, value] of Object.entries({FIREBASE_CONFIG:'{"projectId":"local-demo"}',CHANGES:'[["Demo","Explore sample data. Changes stay in this browser session."]]',VERSION:'2.0.0 Demo',BUILD:'2026-10-18',BROKER_DOMAIN:'',SERVER_HOST:'demo.local',MQTT_PORT:'1883'})) page = page.replaceAll('__'+key+'__', () => value)
-page = page.replace('<body>', '<body><div style="padding:10px;text-align:center;background:#134e4a;color:white">Interactive demo · Sample data · Changes are temporary · No live services connected</div>')
+const page = buildDemoPage()
 const port = Number(process.env.DEMO_PORT) || 8081
 const downlink = createDownlinkHandler({
   verifyToken: async token => {if(token!=='demo')throw Error();return {uid:'demo-owner'}},

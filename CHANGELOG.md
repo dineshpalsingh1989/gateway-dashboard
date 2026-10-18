@@ -1,5 +1,12 @@
 # Changelog
 
+## GitHub Pages demo — 2026-10-18
+
+- Added a self-contained browser demo at https://dineshpalsingh1989.github.io/milesight-dashboard/ with all 24 devices, charts, CSV export, editable settings, and simulated commands/history.
+- Added `npm run build:demo` and a GitHub Pages build/deployment workflow.
+- Moved demo health checks, connection tests, debug events, and command handling into browser simulations so static hosting needs no Node.js server, Firebase credentials, or MQTT connection.
+- Added checks that the generated page contains no unresolved configuration and that demo service operations make no backend requests.
+
 ## V2.0 maintenance update — 2026-10-18
 
 ### Added

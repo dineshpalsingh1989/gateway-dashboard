@@ -33,9 +33,5 @@ function GoogleAuthProvider(){} function OAuthProvider(){}
 async function runTransaction(db,fn){return fn({get:getDoc,set:setDoc,update:updateDoc,delete:deleteDoc})}
 function where(...args){return {where:args}} function orderBy(){return {}} function limit(n){return {limit:n}} function query(path,...filters){return {path,filters}}
 async function getDocs(q){var rows=[];demoCollection(q.path||q).forEach(d=>rows.push(d));if(q.filters){q.filters.forEach(f=>{if(f.where)rows=rows.filter(d=>d.data()[f.where[0]]>=f.where[2])});rows.sort((a,b)=>(b.data().ts||b.data().at)-(a.data().ts||a.data().at));q.filters.forEach(f=>{if(f.limit)rows=rows.slice(0,f.limit)})}return {size:rows.length,forEach:fn=>rows.forEach(fn)}}
-var demoFetch=window.fetch.bind(window)
-window.fetch=async function(url,options){
- var response=await demoFetch(url,options)
- if(url==='/downlink'&&response.ok){var result=await response.clone().json();if(result.ok){var body=JSON.parse(options.body);await setDoc('workspaces/demo-owner/commands/'+Date.now(),{...result,deviceId:body.deviceId,eui:body.deviceId,at:Date.now(),status:'simulated'});return new Response(JSON.stringify({...result,status:'simulated',detail:'Demo: command simulated. No MQTT message or radio command was sent.'}),{headers:{'content-type':'application/json'}})}}
- return response
-}
+window.__demoDevice=function(id){return demoRecords['workspaces/demo-owner/devices/'+id]}
+window.__demoSaveCommand=function(record){return setDoc('workspaces/demo-owner/commands/'+crypto.randomUUID(),record)}
