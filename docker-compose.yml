@@ -1,0 +1,11 @@
+services:
+  milesight-dashboard:
+    image: ghcr.io/dineshpalsingh1989/milesight-dashboard:latest
+    container_name: milesight-dashboard
+    restart: unless-stopped
+    ports:
+      - "1883:1883"
+      - "8883:8883"
+      - "8080:8080"
+    volumes:
+      - ./data:/data

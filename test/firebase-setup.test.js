@@ -49,9 +49,64 @@ test('Setup protects configuration, testing and saving with its own administrato
   assert.equal((await call(handler, '/setup/save', { token, method: 'POST', body: 'x'.repeat(16385) })).status, 413)
   assert.equal((await call(handler, '/setup/save', { token, method: 'POST', body: JSON.stringify(config) })).status, 200)
   assert.equal(readSavedConfig(path).web.apiKey, 'test-key')
+  const edited = { ...config, web: { ...config.web, appId: '1:123:web:changed' } }
+  await call(handler, '/setup/save', { token, method: 'POST', body: JSON.stringify(edited) })
+  const reloaded = JSON.parse((await call(handler, '/setup/config', { token })).body)
+  assert.equal(reloaded.web.appId, edited.web.appId)
+  assert.equal(reloaded.restartRequired, true)
   assert.equal((await call(handler, '/setup/test', { token, method: 'POST', body: JSON.stringify(config) })).status, 200)
   assert.equal(tested, true)
   assert.equal((await call(handler, '/health')).handled, false)
+})
+
+function setupUI(fetch) {
+  const html = readFileSync(new URL('../firebase-setup.html', import.meta.url), 'utf8')
+  const nodes = {}, listeners = {}
+  for (const match of html.matchAll(/id="([^"]+)"/g)) {
+    nodes[match[1]] = { value: '', disabled: false, textContent: '', dataset: {},
+      setAttribute() {}, addEventListener(type, fn) { this[type] = fn },
+      replaceChildren() {}, reportValidity: () => true, focus() {} }
+  }
+  const buttons = ['load', 'import', 'test', 'save'].map(id => nodes[id])
+  nodes.keyPath.value = './serviceAccountKey.json'
+  const context = vm.createContext({ document: { getElementById: id => nodes[id], querySelectorAll: () => buttons },
+    window: { addEventListener: (type, fn) => { listeners[type] = fn } }, fetch, AbortSignal })
+  vm.runInContext(html.match(/<script>([\s\S]*?)<\/script>/)[1], context)
+  return { nodes, listeners }
+}
+
+test('Setup protects unsaved edits, locks fields during save and clears dirty state on success', async () => {
+  let resolve
+  const { nodes, listeners } = setupUI(() => new Promise(done => { resolve = done }))
+  nodes.token.value = 'test-token'
+  nodes.apiKey.value = 'changed'
+  nodes.settings.input({ target: nodes.apiKey })
+  assert.equal(nodes['save-state'].textContent, 'Unsaved changes')
+  assert.equal(nodes.load.disabled, true)
+  let prevented = false
+  listeners.beforeunload({ preventDefault() { prevented = true } })
+  assert.equal(prevented, true)
+  nodes.settings.onsubmit({ preventDefault() {} })
+  assert.equal(nodes['config-fields'].disabled, true)
+  resolve({ ok: true, json: async () => ({ message: 'Saved. Restart required.' }) })
+  // Drain the asynchronous fetch, JSON parsing, save callback, and busy cleanup.
+  await new Promise(done => setImmediate(done))
+  assert.equal(nodes['config-fields'].disabled, false)
+  assert.equal(nodes['save-state'].textContent, 'Saved · restart required')
+  prevented = false
+  listeners.beforeunload({ preventDefault() { prevented = true } })
+  assert.equal(prevented, false)
+})
+
+test('Setup recovers from a network failure without losing edits', async () => {
+  const { nodes } = setupUI(async () => { throw new TypeError('fetch failed') })
+  nodes.token.value = 'test-token'; nodes.apiKey.value = 'unsaved-key'
+  nodes.settings.input({ target: nodes.apiKey })
+  await nodes.load.onclick()
+  assert.match(nodes.message.textContent, /Could not reach the server/)
+  assert.equal(nodes.apiKey.value, 'unsaved-key')
+  assert.equal(nodes['config-fields'].disabled, false)
+  assert.equal(nodes.save.disabled, false)
 })
 
 test('First-run setup redirects to a self-contained page without Firebase', async () => {

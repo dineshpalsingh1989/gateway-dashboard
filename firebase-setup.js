@@ -131,7 +131,10 @@ export function createSetupHandler(current, { token = process.env.FIREBASE_SETUP
     const expected = Buffer.from(token)
     if (provided.length !== expected.length || !timingSafeEqual(provided, expected)) { reply(401, { error: 'Enter the administrator setup token from the server console.' }); return true }
     if (pathname === '/setup/config' && req.method === 'GET') {
-      reply(200, { ...current, overrides: webFields.filter((_, i) => process.env['VITE_FIREBASE_' + envFields[i]]),
+      const saved = existsSync(path) ? readSavedConfig(path) : null
+      const restartRequired = Boolean(saved && ((process.env.FIREBASE_SERVICE_ACCOUNT_PATH || saved.keyPath) !== current.keyPath ||
+        webFields.some((key, i) => (process.env['VITE_FIREBASE_' + envFields[i]] || saved.web[key] || '') !== (current.web[key] || ''))))
+      reply(200, { ...(saved || current), restartRequired, overrides: webFields.filter((_, i) => process.env['VITE_FIREBASE_' + envFields[i]]),
         keyPathOverride: Boolean(process.env.FIREBASE_SERVICE_ACCOUNT_PATH) }); return true
     }
     if (!['/setup/save', '/setup/test'].includes(pathname) || req.method !== 'POST') { reply(404, { error: 'Not found' }); return true }

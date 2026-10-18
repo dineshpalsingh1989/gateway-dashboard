@@ -39,12 +39,13 @@ import { readSavedConfig, createSetupHandler, startSetupServer } from './firebas
 // /health, and in the startup log, so "which build is actually running?" is
 // never a guess again. BUILD is the date the version was cut.
 
-const VERSION = '2.4.0'
+const VERSION = '2.4.1'
 const BUILD = '2026-10-18'
 
 // What changed, newest first. Kept here so the running server can tell you
 // its own history - no changelog file to lose track of.
 const CHANGES = [
+  ['2.4.1', 'Polished Firebase setup with unsaved-change protection, clear save and restart status, locked fields during requests, actionable connection errors, and correct reloading of saved settings.'],
   ['2.4.0', 'Removed the bundled Firebase project configuration. Added a protected Firebase setup page with configuration import, connection tests, local saving, and first-run setup before sign-in.'],
   ['2.3.0', 'Added deployable Firestore access rules and authorization regression tests. History now keeps the latest selection, labels the 500-reading limit, disables empty or loading exports, and offers retry on failure. Hardened HTML escaping and self-test requests, refreshed verified email tokens, and cleaned up debug refresh timers.'],
   ['2.2.1', 'Fixed /start asking an already signed-in person for their email, which then treated the address they typed as a question about their sensors. A bare email or code from someone already signed in is now answered directly instead of being sent to Gemini.'],

@@ -6,6 +6,9 @@
 <style>
 :root{font-family:system-ui,sans-serif;color:#20312d;background:#f3f6f4;color-scheme:light}*{box-sizing:border-box}body{margin:0}main{max-width:850px;margin:40px auto;padding:0 20px 50px}a{color:#176751}header{margin-bottom:26px}h1{font-size:30px;letter-spacing:-1px;margin:12px 0}h2{font-size:18px;margin:0 0 10px}p{color:#566760;line-height:1.6;margin:8px 0 18px}.eyebrow{font-size:12px;letter-spacing:2px;font-weight:700;color:#176751}.card{background:white;border:1px solid #dce5df;border-radius:16px;padding:24px;margin:16px 0;box-shadow:0 4px 20px #223b2c05}.grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}.full{grid-column:1/-1}label{display:block;font-size:13px;font-weight:650}input,textarea{display:block;width:100%;margin-top:7px;border:1px solid #becdc4;border-radius:8px;padding:11px;font:14px ui-monospace,monospace;background:#fcfdfc;color:#20312d}textarea{min-height:120px;resize:vertical}input:focus,textarea:focus,button:focus-visible{outline:3px solid #a1cfb8;outline-offset:2px}small{display:block;color:#61756a;font-size:12px;font-weight:400;margin-top:7px;line-height:1.5}button{font:600 14px system-ui;cursor:pointer;border:1px solid #bdcec3;border-radius:8px;padding:11px 17px;color:#1c513c;background:#f5f9f6}button.primary{background:#1c6549;color:white;border-color:#1c6549}button:disabled{opacity:.55;cursor:wait}.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:20px}.note{border-left:3px solid #bb8f25;padding:10px 14px;background:#fff9e9;color:#70561c}.result{padding:14px 0;border-bottom:1px solid #e0e8e2}.result:last-child{border:0}.result b{font-size:14px}.result p{font-size:13px;margin:6px 0 0}.pass{color:#176740}.fail{color:#a83328}#message{white-space:pre-wrap;overflow-wrap:anywhere;margin:18px 0}details{margin:18px 0}summary{cursor:pointer;font-size:14px;font-weight:600}.checklist{padding-left:20px;color:#566760;font-size:14px;line-height:1.8}@media(max-width:600px){main{margin-top:24px}.grid{grid-template-columns:1fr}.card{padding:20px}h1{font-size:26px}}
 </style>
+<style>
+.status{display:inline-flex;align-items:center;border-radius:999px;padding:6px 12px;font-size:12px;font-weight:650;background:#e8eeea;color:#455f50}.status[data-state="dirty"]{background:#fff3d2;color:#795614}.status[data-state="saved"]{background:#e1f2e7;color:#176740}fieldset{border:0;padding:0;margin:0;min-width:0}fieldset:disabled{opacity:.7}.actions button{min-height:44px}input,textarea{scroll-margin-top:24px}#results{overflow-wrap:anywhere}#message:empty{display:none}
+</style>
 </head>
 <body><main>
 <header><a href="/">← Dashboard</a><p class="eyebrow">MILESIGHT / SERVER SETTINGS</p><h1>Connect Firebase</h1><p>Configure the Firebase project used by this dashboard. Test your connection before saving. Changes apply after a server restart.</p></header>
@@ -13,6 +16,8 @@
 <label for="token">Setup token<input id="token" type="password" autocomplete="off" spellcheck="false"></label><div class="actions"><button id="load" type="button">Unlock &amp; load settings</button></div>
 <p id="overrides" class="note" hidden></p></section>
 <form id="settings">
+<div id="save-state" class="status" role="status">Settings not loaded</div>
+<fieldset id="config-fields">
 <section class="card" aria-labelledby="web-title"><h2 id="web-title">Firebase web app</h2><p>Find these values in Firebase Console → Project settings → General → Your apps → Web app configuration.</p>
 <details><summary>Paste a Firebase configuration JSON</summary><label for="paste"><small>Paste the JSON object only, without JavaScript declarations. Private service-account keys do not belong here.</small><textarea id="paste" spellcheck="false" placeholder='{"apiKey":"…","authDomain":"…","projectId":"…","appId":"…"}'></textarea></label><div class="actions"><button id="import" type="button">Fill fields from JSON</button></div></details>
 <div class="grid">
@@ -29,19 +34,37 @@
 </section>
 <section class="card" aria-labelledby="test-title"><h2 id="test-title">Test &amp; save</h2><p>The connection test checks Google Authentication, project matching, and Firestore access. It writes, reads, and removes one temporary document in <code>_setupProbes</code>.</p><div class="actions"><button id="test" type="button">Test Firebase connection</button><button id="save" type="submit" class="primary">Save configuration</button></div><div id="message" role="status" aria-live="polite"></div><div id="results" aria-live="polite"></div>
 <details><summary>Complete the Firebase checklist</summary><ul class="checklist"><li>Create a Firestore database in Native mode.</li><li>Enable Email/Password and any social providers you need in Authentication.</li><li>Add the dashboard hostname to Authentication → Settings → Authorized domains.</li><li>Deploy this project's <code>firestore.rules</code> before using the dashboard.</li><li>After restarting, sign in to verify browser access and permissions.</li></ul><p>The server test uses administrative access. It cannot confirm browser security rules, social sign-in, or authorized domains. A valid API key does not confirm that the key belongs to the project ID you entered.</p></details>
-</section></form></main>
+</section></fieldset></form></main>
 <script>
 const fields=['apiKey','authDomain','projectId','appId','storageBucket','messagingSenderId','databaseURL'];
 const $=id=>document.getElementById(id);
+let baseline=JSON.stringify(config()),dirty=false,working=false,restartRequired=false;
+function status(){const badge=$('save-state');badge.dataset.state=dirty?'dirty':restartRequired?'saved':'clean';badge.textContent=dirty?'Unsaved changes':restartRequired?'Saved · restart required':'No unsaved changes';$('load').disabled=working||dirty}
+function changed(){dirty=JSON.stringify(config())!==baseline;renderResults([]);status();message(dirty?'You have unsaved changes. Test the connection before saving.':'No unsaved changes.')}
 function message(text,bad=false){$('message').textContent=text;$('message').className=bad?'fail':'pass'}
 function fill(web){fields.forEach(key=>$(key).value=typeof web[key]==='string'?web[key]:'')}
 function config(){return {web:Object.fromEntries(fields.map(key=>[key,$(key).value.trim()])),keyPath:$('keyPath').value.trim()}}
 function renderResults(results){$('results').replaceChildren();(results||[]).forEach(result=>{const row=document.createElement('div');row.className='result';const title=document.createElement('b');title.className=result.ok?'pass':'fail';title.textContent=(result.ok?'✓ Passed · ':'✕ Failed · ')+result.name;const detail=document.createElement('p');detail.textContent=result.detail;row.append(title,detail);$('results').append(row)})}
-async function request(action,body){const response=await fetch('/setup/'+action,{method:body?'POST':'GET',headers:{'content-type':'application/json','x-setup-token':$('token').value.trim()},body:body?JSON.stringify(body):undefined});const data=await response.json();if(!response.ok)throw new Error(data.error||'Request failed.');return data}
-async function busy(button,work){const old=button.textContent;document.querySelectorAll('button').forEach(b=>b.disabled=true);button.textContent='Working…';try{await work()}catch(error){message(error.message||'Could not reach the server.',true)}finally{document.querySelectorAll('button').forEach(b=>b.disabled=false);button.textContent=old}}
-$('load').onclick=()=>busy($('load'),async()=>{const data=await request('config');fill(data.web);$('keyPath').value=data.keyPath||'./serviceAccountKey.json';const overrides=[...(data.overrides||[]),...(data.keyPathOverride?['service-account path']:[])];$('overrides').hidden=!overrides.length;$('overrides').textContent='Environment overrides active: '+overrides.join(', ')+'. These take precedence after restart. Update or remove those environment variables to use saved values.';message('Settings loaded. You can edit and test them now.')});
-$('import').onclick=()=>{try{const web=JSON.parse($('paste').value);if(!web||typeof web!=='object'||Array.isArray(web)||web.private_key)throw new Error();fill(web);$('paste').value='';renderResults([]);message('Web configuration imported. Review the fields and test the connection.')}catch{message('Paste a valid Firebase web configuration JSON object, without JavaScript or a private key.',true)}};
+async function request(action,body){
+  const token=$('token').value.trim();
+  if(!token){$('token').focus();throw new Error('Enter the administrator setup token first.')}
+  let response;
+  try{response=await fetch('/setup/'+action,{method:body?'POST':'GET',headers:{'content-type':'application/json','x-setup-token':token},body:body?JSON.stringify(body):undefined,signal:AbortSignal.timeout(65000)})}
+  catch(error){throw new Error(error.name==='TimeoutError'?'The server took too long to respond. Check its connection and try again.':'Could not reach the server. Check that it is running, then try again.')}
+  let data;try{data=await response.json()}catch{throw new Error('The server returned an unexpected response. Check the server or reverse proxy, then retry.')}
+  if(!response.ok)throw new Error(data.error||'Request failed. Please try again.');return data
+}
+async function busy(button,work){
+  if(working)return;working=true;
+  const old=button.textContent;document.querySelectorAll('button').forEach(b=>b.disabled=true);$('config-fields').disabled=true;$('settings').setAttribute('aria-busy','true');button.textContent=button.id==='test'?'Testing connection…':button.id==='save'?'Saving…':'Loading…';
+  try{await work()}catch(error){message(error.message||'Could not reach the server.',true)}
+  finally{working=false;document.querySelectorAll('button').forEach(b=>b.disabled=false);$('config-fields').disabled=false;$('settings').setAttribute('aria-busy','false');button.textContent=old;status()}
+}
+$('load').onclick=()=>busy($('load'),async()=>{const data=await request('config');fill(data.web);$('keyPath').value=data.keyPath||'./serviceAccountKey.json';baseline=JSON.stringify(config());dirty=false;restartRequired=Boolean(data.restartRequired);const overrides=[...(data.overrides||[]),...(data.keyPathOverride?['service-account path']:[])];$('overrides').hidden=!overrides.length;$('overrides').textContent='Environment overrides active: '+overrides.join(', ')+'. These take precedence after restart. Update or remove those environment variables to use saved values.';renderResults([]);message(restartRequired?'Saved settings loaded. Restart the server to apply them.':'Settings loaded. You can edit and test them now.')});
+$('import').onclick=()=>{try{const web=JSON.parse($('paste').value);if(!web||typeof web!=='object'||Array.isArray(web)||web.private_key)throw new Error();fill(web);$('paste').value='';changed();message('Web configuration imported. Review the fields and test the connection.')}catch{message('Paste a valid Firebase web configuration JSON object, without JavaScript or a private key.',true)}};
 $('test').onclick=()=>{if(!$('settings').reportValidity())return;busy($('test'),async()=>{renderResults([]);message('Testing Firebase. This may take a moment…');const data=await request('test',config());renderResults(data.results);message(data.ok?'Connection checks passed. Complete the browser checklist below, then save.':'Some checks failed. Review the results below.',!data.ok)})};
-$('settings').onsubmit=event=>{event.preventDefault();busy($('save'),async()=>{const data=await request('save',config());message(data.message)})};
-$('settings').addEventListener('input',()=>{renderResults([]);message('Configuration changed. Test again before saving.')});
+$('settings').onsubmit=event=>{event.preventDefault();if(!$('settings').reportValidity())return;busy($('save'),async()=>{const data=await request('save',config());baseline=JSON.stringify(config());dirty=false;restartRequired=true;message(data.message)})};
+$('settings').addEventListener('input',event=>{if(event.target.id!=='paste')changed()});
+$('token').addEventListener('keydown',event=>{if(event.key==='Enter'&&!$('load').disabled){event.preventDefault();$('load').click()}});
+window.addEventListener('beforeunload',event=>{if(dirty){event.preventDefault();event.returnValue=''}});
 </script></body></html>

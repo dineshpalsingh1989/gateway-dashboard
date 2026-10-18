@@ -1,6 +1,6 @@
 {
   "name": "milesight-dashboard",
-  "version": "2.4.0",
+  "version": "2.4.1",
   "description": "MQTT broker, web dashboard, Firebase setup and Firestore storage for Milesight gateways",
   "type": "module",
   "main": "milesight.js",
