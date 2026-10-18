@@ -1,0 +1,94 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    function owner(uid) { return signedIn() && request.auth.uid == uid; }
+    function ownEmail(email) {
+      return signedIn() && request.auth.token.email_verified == true
+        && request.auth.token.email.lower() == email;
+    }
+    function workspace(uid, label) {
+      return get(/databases/$(database)/documents/users/$(uid)).data.workspaceLabel == label;
+    }
+    match /users/{uid} {
+      allow get: if owner(uid);
+      allow create: if owner(uid)
+        && request.resource.data.keys().hasOnly(['email', 'workspaceLabel', 'createdAt'])
+        && getAfter(/databases/$(database)/documents/workspaceNames/$(request.resource.data.workspaceLabel)).data.uid == uid;
+    }
+    match /workspaceNames/{label} {
+      // Exact lookup supports the pre-signup availability check. No listing.
+      allow get: if true;
+      allow create: if signedIn() && label.matches('[a-z0-9_-]{3,}_db')
+        && request.resource.data.keys().hasOnly(['uid', 'claimedAt'])
+        && request.resource.data.uid == request.auth.uid
+        && getAfter(/databases/$(database)/documents/users/$(request.auth.uid)).data.workspaceLabel == label;
+    }
+    match /brokerUsers/{username} {
+      // Broker reads use Admin SDK. Browsers can only create their own credentials.
+      allow create: if signedIn() && request.resource.data.uid == request.auth.uid
+        && request.resource.data.keys().hasOnly(['uid', 'password', 'topicPrefix', 'createdAt'])
+        && request.resource.data.password is string && request.resource.data.password.size() >= 22
+        && workspace(request.auth.uid, request.resource.data.topicPrefix);
+    }
+    match /accountsByEmail/{email} {
+      allow create, update: if signedIn() && request.auth.token.email.lower() == email
+        && request.resource.data.uid == request.auth.uid
+        && workspace(request.auth.uid, request.resource.data.workspaceLabel);
+    }
+    match /workspaces/{uid}/devices/{device} {
+      allow read: if owner(uid);
+      allow update: if owner(uid) && request.resource.data.diff(resource.data).affectedKeys()
+        .hasOnly(['name', 'nameSource', 'type', 'modelSource', 'matchedOn']);
+    }
+    match /workspaces/{uid}/telemetry/{device} {
+      allow read: if owner(uid);
+      match /readings/{reading} { allow read: if owner(uid); }
+    }
+    match /workspaces/{uid}/settings/{setting} {
+      allow read: if owner(uid);
+      allow write: if owner(uid) && setting in
+        ['mqttCredentials', 'telegram', 'telegramUsers', 'members'];
+    }
+    match /workspaces/{uid}/secrets/{secret} {
+      allow write: if owner(uid) && secret == 'telegram';
+    }
+    match /workspaces/{uid}/joinRequests/{email} {
+      allow read, delete: if owner(uid);
+      allow create, update: if ownEmail(email)
+        && request.resource.data.email == email && request.resource.data.uid == request.auth.uid
+        && request.resource.data.keys().hasOnly(['email', 'uid', 'workspaceLabel', 'at', 'createdAt'])
+        && workspace(uid, request.resource.data.workspaceLabel);
+    }
+    match /memberIndex/{email} {
+      allow get: if ownEmail(email);
+      allow create: if signedIn() && request.resource.data.ownerUid == request.auth.uid
+        && request.resource.data.email == email
+        && workspace(request.auth.uid, request.resource.data.workspaceLabel);
+      allow update: if owner(resource.data.ownerUid)
+        && request.resource.data.ownerUid == resource.data.ownerUid
+        && request.resource.data.email == email
+        && workspace(request.auth.uid, request.resource.data.workspaceLabel);
+      allow delete: if owner(resource.data.ownerUid);
+    }
+    match /memberInvites/{code} {
+      allow create: if signedIn() && request.resource.data.ownerUid == request.auth.uid
+        && workspace(request.auth.uid, request.resource.data.workspaceLabel)
+        && request.resource.data.expiresAt > request.time.toMillis()
+        && request.resource.data.expiresAt <= request.time.toMillis() + 604800000;
+    }
+    match /telegramLinks/{code} {
+      allow create: if signedIn() && request.resource.data.uid == request.auth.uid
+        && ownEmail(request.resource.data.email)
+        && request.resource.data.expiresAt > request.time.toMillis()
+        && request.resource.data.expiresAt <= request.time.toMillis() + 600000
+        && (owner(request.resource.data.ownerUid) ||
+          (get(/databases/$(database)/documents/memberIndex/$(request.resource.data.email)).data.ownerUid == request.resource.data.ownerUid
+           && get(/databases/$(database)/documents/memberIndex/$(request.resource.data.email)).data.status == 'active'));
+    }
+    match /telegramBots/{uid} {
+      allow write: if owner(uid);
+    }
+    // Unmatched paths and operations are denied, including browser reads of secrets.
+  }
+}
