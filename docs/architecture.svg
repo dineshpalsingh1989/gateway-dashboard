@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="360" viewBox="0 0 1000 360" font-family="Segoe UI, Arial, sans-serif">
+  <defs>
+    <marker id="a" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+      <path d="M0 0 L10 5 L0 10 z" fill="#475569"/>
+    </marker>
+  </defs>
+  <rect width="1000" height="360" rx="12" fill="#f8fafc" stroke="#e2e8f0"/>
+  <g font-size="15" text-anchor="middle">
+    <rect x="30" y="40" width="170" height="90" rx="10" fill="#e0f2fe" stroke="#0284c7"/>
+    <text x="115" y="78" font-weight="700" fill="#0c4a6e">Milesight sensors</text>
+    <text x="115" y="100" fill="#0c4a6e" font-size="13">EM300 · AM300 · WS523</text>
+    <text x="115" y="118" fill="#0c4a6e" font-size="13">UC300 · TS201 · VS121</text>
+
+    <rect x="30" y="220" width="170" height="90" rx="10" fill="#e0f2fe" stroke="#0284c7"/>
+    <text x="115" y="260" font-weight="700" fill="#0c4a6e">Milesight gateway</text>
+    <text x="115" y="284" fill="#0c4a6e" font-size="13">LoRaWAN → MQTT</text>
+
+    <rect x="340" y="110" width="260" height="140" rx="10" fill="#dcfce7" stroke="#16a34a"/>
+    <text x="470" y="145" font-weight="700" fill="#14532d">milesight.js</text>
+    <text x="470" y="175" fill="#14532d" font-size="13">MQTT broker :1883 / :8883</text>
+    <text x="470" y="197" fill="#14532d" font-size="13">Payload decoder + device detection</text>
+    <text x="470" y="219" fill="#14532d" font-size="13">Web server :8080</text>
+
+    <rect x="760" y="30" width="210" height="80" rx="10" fill="#fef3c7" stroke="#d97706"/>
+    <text x="865" y="68" font-weight="700" fill="#78350f">Firebase Firestore</text>
+    <text x="865" y="90" fill="#78350f" font-size="13">readings · accounts · rules</text>
+
+    <rect x="760" y="140" width="210" height="80" rx="10" fill="#ede9fe" stroke="#7c3aed"/>
+    <text x="865" y="178" font-weight="700" fill="#4c1d95">Web dashboard</text>
+    <text x="865" y="200" fill="#4c1d95" font-size="13">live charts · CSV export</text>
+
+    <rect x="760" y="250" width="210" height="80" rx="10" fill="#fce7f3" stroke="#db2777"/>
+    <text x="865" y="288" font-weight="700" fill="#831843">Telegram + Gemini</text>
+    <text x="865" y="310" fill="#831843" font-size="13">ask about your sensors</text>
+  </g>
+  <g stroke="#475569" stroke-width="2" fill="none" marker-end="url(#a)">
+    <path d="M115 130 V220"/>
+    <path d="M200 265 L340 215"/>
+    <path d="M600 150 L760 75"/>
+    <path d="M600 180 L760 180"/>
+    <path d="M600 215 L760 285"/>
+  </g>
+  <g font-size="12" fill="#475569">
+    <text x="125" y="180">LoRaWAN</text>
+    <text x="235" y="225">MQTT</text>
+  </g>
+</svg>

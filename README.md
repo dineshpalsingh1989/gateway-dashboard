@@ -1,4 +1,8 @@
-# Milesight Dashboard
+<p align="center"><img src="docs/banner.svg" alt="Milesight Dashboard" width="100%"></p>
+
+![Node](https://img.shields.io/badge/node-%3E%3D18-339933?logo=node.js&logoColor=white)
+![MQTT](https://img.shields.io/badge/MQTT-broker-660066?logo=mqtt&logoColor=white)
+![Firebase](https://img.shields.io/badge/Firebase-Firestore-FFCA28?logo=firebase&logoColor=black)
 
 A self-hosted, single-file platform for **Milesight IoT sensors** (LoRaWAN) connected through a Milesight gateway. It runs an MQTT broker, serves a live web dashboard and stores readings in Firebase Firestore, with no build step.
 
@@ -31,11 +35,7 @@ Unrecognised devices are still stored, under a generic `value` metric.
 
 ## Architecture
 
-```
-Milesight sensors ──LoRaWAN──▶ Milesight gateway ──MQTT──▶ milesight.js ──▶ Firestore
-                                                              │  ▲
-                                                  web :8080 ◀─┘  └─▶ Telegram bot + Gemini
-```
+![Architecture](docs/architecture.svg)
 
 ## Quick start
 
