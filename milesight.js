@@ -49,6 +49,7 @@ const BUILD = '2026-10-18'
 // What changed, newest first. Kept here so the running server can tell you
 // its own history - no changelog file to lose track of.
 const CHANGES = [
+  ['2.0.0 public browser demo', 'Added a GitHub Pages demo with all 24 sample devices, charts, CSV export, and simulated commands. The static demo requires no server, Firebase credentials, or gateway.'],
   ['2.0.0 sensors and MQTT commands', 'Added a 24-device local demo, 17 gateway-decoded sensor profiles, workspace-protected MQTT downlinks with UC300 presets, message previews, and command history. Published status does not confirm sensor delivery. Deploy updated Firestore rules and configure the gateway downlink topic for live use.'],
   ['2.0.0 reliability update', 'Gated image publishing on checks and exact-source installation tests, added CI rules-emulator coverage, non-root container defaults, request deadlines, and graceful service shutdown.'],
   ['2.0.0', 'Current release renamed V2.0 at the administrator\'s request. Includes protected Firebase setup, connection tests, saved settings, authorization rules, history fixes, and responsive setup styling with dark mode. Earlier version labels below are retained as build history.'],

@@ -33,7 +33,15 @@ broker → gateway → sensor.
 | Live dashboard | Device cards, history charts, CSV downloads, storage usage, and workspace debug stream |
 | Telegram assistant | Workspace-scoped sensor questions through your Telegram bot and Gemini key |
 
-## Try the local demo
+## Try the dashboard demo
+
+**[Open the public dashboard demo](https://dineshpalsingh1989.github.io/milesight-dashboard/)**
+
+The GitHub Pages demo runs entirely in your browser. Explore the sample sensors,
+charts, CSV export, and simulated device controls without installing anything.
+It connects to no real gateway or Firebase project. Reloading resets your changes.
+
+To run the same demo locally:
 
 Use Node.js 22 or 24:
 
@@ -52,6 +60,15 @@ The command appears in **Recent commands** as simulated.
 
 Demo readings and external services are simulated. Changes are temporary and no
 radio commands are sent. Set `DEMO_PORT` to use a different local port.
+
+### Publish with GitHub Pages
+
+`npm run build:demo` creates a self-contained `dist/index.html`. The
+**Dashboard demo** GitHub Actions workflow builds and publishes this artifact
+after changes land on `main`. GitHub Pages must use **GitHub Actions** as its
+publishing source. Only the generated static demo is uploaded; server credentials
+and runtime files are excluded. GitHub Pages hosts the simulated demo, while real
+sensor ingestion and commands require the self-hosted backend described below.
 
 ## Install on Linux
 
