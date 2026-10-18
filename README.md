@@ -16,7 +16,42 @@ See [CHANGELOG.md](CHANGELOG.md) for changes, validation, and deployment require
 
 ![Architecture](docs/architecture.svg)
 
-The gateway publishes to the server's MQTT broker. The server decodes readings and writes them to Firestore; the signed-in dashboard reads live data and history through Firebase.
+The gateway sends readings to the workspace MQTT uplink topic. The server stores
+them in Firestore, and the signed-in dashboard displays live data and history.
+Owners can also send commands: dashboard → authenticated server endpoint → MQTT
+broker → gateway → sensor.
+
+## What is included
+
+| Feature | Available now |
+| --- | --- |
+| Local demo | 24 sample devices, charts, CSV export, settings, debug activity, and simulated commands |
+| Sensor profiles | 7 existing profiles plus 17 additions covering leaks, water, soil, current, people counting, temperature, tilt, and weather |
+| Two-way MQTT | Incoming readings and owner-authorized command publication through Milesight Embedded Network Server |
+| Device commands | Hexadecimal/Base64 preview, configurable topic, FPort, confirmation option, and UC300 DO1/DO2 presets |
+| Command history | Server-written attempts and publication status, readable only by the workspace owner |
+| Live dashboard | Device cards, history charts, CSV downloads, storage usage, and workspace debug stream |
+| Telegram assistant | Workspace-scoped sensor questions through your Telegram bot and Gemini key |
+
+## Try the local demo
+
+Use Node.js 22 or 24:
+
+```sh
+git clone https://github.com/dineshpalsingh1989/milesight-dashboard.git
+cd milesight-dashboard
+npm ci
+npm run demo
+```
+
+Open **http://localhost:8081**. No Firebase configuration or gateway is needed.
+Explore the 24 sample devices, open **View history**, or download CSV. In
+**Settings → Send a device command**, choose **Pump room controller**, select a
+UC300 output preset, review the MQTT preview, and select **Publish command**.
+The command appears in **Recent commands** as simulated.
+
+Demo readings and external services are simulated. Changes are temporary and no
+radio commands are sent. Set `DEMO_PORT` to use a different local port.
 
 ## Install on Linux
 
@@ -81,32 +116,50 @@ For Telegram, enter your bot token and Gemini API key in Settings, run their tes
 
 Each gateway uses its workspace MQTT credentials and topic. Owners use Firebase sign-in for dashboard access. Members added by email use the Telegram assistant; membership alone does not grant the owner's dashboard or broker credentials.
 
-## Run directly with Node.js
+## Sensor profiles
 
-To explore the dashboard with sample sensors and history, run `npm run demo`
-and open `http://localhost:8081`. This isolated preview requires no Firebase
-configuration. Edits are temporary, and external services are simulated.
-The demo includes 24 devices covering leak detection, pulse metering, tank
-distance and water level, soil, pressure, current, people counting, temperature,
-tilt, weather, and a UC300 controller. In Settings, select the UC300 to try
-documented digital-output commands; demo commands are simulated.
+Existing profiles: **EM300-TH, EM300-MCS, AM300, WS523, UC300, TS201, and VS121**.
+The update adds these 17 named profiles:
 
-### Additional sensors and two-way MQTT
+| Application | Added models | Readings displayed |
+| --- | --- | --- |
+| Leak detection | EM300-SLD, EM300-ZLD, EM300-MLD | Leak status and battery |
+| Pulse metering | EM300-DI | Pulse count and battery |
+| Tank distance | EM400-UDL | Distance and battery |
+| Water level | EM500-SWL | Water level and battery |
+| Soil monitoring | EM500-SMTC | Temperature, moisture, conductivity, and battery |
+| Pipe pressure | EM500-PP | Pressure in kPa and battery |
+| Current monitoring | CT101, CT103, CT301 | Current, including three phases for CT301 |
+| Visitor counting | VS133, VS125 | Total entries and exits |
+| Cold storage | TS301, TS302 | Temperature, dual probes for TS302, and battery |
+| Tilt monitoring | EM320-TILT | X/Y/Z angles and battery |
+| Weather | WTS506 | Temperature, humidity, wind speed/direction, rainfall, and pressure |
 
-Additional named profiles: EM300-SLD/ZLD/MLD/DI, EM400-UDL, EM500-SWL/SMTC/PP,
-CT101/103/301, VS133/125, TS301/302, EM320-TILT, and WTS506.
+### Payload requirements
+
 Use Milesight's official per-model payload codec on the gateway and forward
 decoded JSON fields at the top level or inside `object` / `objectJSON`.
-Set `deviceProfileName` to the model, include `devEUI`, or select the model in
-Settings. These additional profiles do not add model-specific raw decoding.
-Field names and units should match `sensor-profiles.js`; adapt gateway codec
+Include `devEUI` to identify the device. Set `deviceProfileName` to the model,
+include the model in `deviceName`, or select it manually in Settings.
+These additional profiles do not add model-specific raw decoding.
+Field names and units should match [sensor-profiles.js](sensor-profiles.js); adapt gateway codec
 output if required. The pipe-pressure profile uses kPa; ambient pressure uses hPa.
 
-For direct downlinks, enable the gateway's **Embedded Network Server** and set
-its MQTT **Downlink Data** topic to `YOUR_WORKSPACE_db/downlink/$deveui`.
-In Settings, choose a device, match that topic template, and review the message
-before selecting **Publish command**. Custom templates must remain within the
-workspace namespace and contain `$deveui`. The dashboard converts 1–51 bytes of
+## Send commands over MQTT
+
+This integration uses the gateway's **Embedded Network Server**. The gateway
+subscribes to downlinks while continuing to publish readings to the uplink topic.
+
+1. Connect the gateway using the workspace broker credentials shown in Settings.
+2. Set its MQTT **Downlink Data** topic to `YOUR_WORKSPACE_db/downlink/$deveui`, replacing `YOUR_WORKSPACE_db` with your actual workspace label.
+3. Open **Settings → Send a device command** and choose a registered device.
+4. Match the downlink topic template, choose FPort (default `85`), and set whether to request LoRaWAN confirmation.
+5. Choose a UC300 DO1/DO2 preset, or enter a hexadecimal command from the exact device model/firmware manual.
+6. Review the topic and Base64 JSON preview, then select **Publish command**.
+7. Check **Recent commands** for publication status and the gateway's packet log for radio delivery.
+
+Custom templates must remain within the workspace namespace and contain
+`$deveui`. The dashboard converts 1–51 bytes of
 hexadecimal command data to Base64 and publishes non-retained MQTT JSON with
 `confirmed`, `fport`, and `data`. Regional radio limits may require shorter commands.
 UC300 DO1/DO2 presets follow [Milesight's MQTT control guide](https://support.milesight-iot.com/support/solutions/articles/73000514114-how-to-remotely-control-devices-via-mqtt-on-milesight-gateway).
@@ -118,6 +171,8 @@ Deploy the updated Firestore rules to read the server-written command history.
 execution. ACK/error notification correlation is not implemented. Class A
 devices generally receive queued downlinks after their next uplink. External
 network servers such as ChirpStack need a separate integration.
+
+## Run directly with Node.js
 
 Use Node.js 22 or 24, which are checked in CI.
 

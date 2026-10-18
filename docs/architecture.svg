@@ -1,47 +1,75 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="360" viewBox="0 0 1000 360" font-family="Segoe UI, Arial, sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="550" viewBox="0 0 1000 550" font-family="Segoe UI, Arial, sans-serif" role="img" aria-labelledby="title description">
+  <title id="title">Milesight Dashboard: readings and two-way MQTT commands</title>
+  <desc id="description">Sensors exchange LoRaWAN readings and commands with a Milesight gateway using its Embedded Network Server. The gateway publishes readings to the workspace MQTT broker and subscribes to downlinks. The server stores readings and command history in Firestore, serves the dashboard, and provides sensor context to Telegram and Gemini. A separate local demo simulates 24 devices without Firebase or hardware.</desc>
   <defs>
-    <marker id="a" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
-      <path d="M0 0 L10 5 L0 10 z" fill="#475569"/>
-    </marker>
+    <marker id="up" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0 0L9 4.5L0 9Z" fill="#475569"/></marker>
+    <marker id="down" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0 0L9 4.5L0 9Z" fill="#0f766e"/></marker>
   </defs>
-  <rect width="1000" height="360" rx="12" fill="#f8fafc" stroke="#e2e8f0"/>
-  <g font-size="15" text-anchor="middle">
-    <rect x="30" y="40" width="170" height="90" rx="10" fill="#e0f2fe" stroke="#0284c7"/>
-    <text x="115" y="78" font-weight="700" fill="#0c4a6e">Milesight sensors</text>
-    <text x="115" y="100" fill="#0c4a6e" font-size="13">EM300 · AM300 · WS523</text>
-    <text x="115" y="118" fill="#0c4a6e" font-size="13">UC300 · TS201 · VS121</text>
-
-    <rect x="30" y="220" width="170" height="90" rx="10" fill="#e0f2fe" stroke="#0284c7"/>
-    <text x="115" y="260" font-weight="700" fill="#0c4a6e">Milesight gateway</text>
-    <text x="115" y="284" fill="#0c4a6e" font-size="13">LoRaWAN → MQTT</text>
-
-    <rect x="340" y="110" width="260" height="140" rx="10" fill="#dcfce7" stroke="#16a34a"/>
-    <text x="470" y="145" font-weight="700" fill="#14532d">milesight.js</text>
-    <text x="470" y="175" fill="#14532d" font-size="13">MQTT broker :1883 / :8883</text>
-    <text x="470" y="197" fill="#14532d" font-size="13">Payload decoder + device detection</text>
-    <text x="470" y="219" fill="#14532d" font-size="13">Web server :8080</text>
-
-    <rect x="760" y="30" width="210" height="80" rx="10" fill="#fef3c7" stroke="#d97706"/>
-    <text x="865" y="68" font-weight="700" fill="#78350f">Firebase Firestore</text>
-    <text x="865" y="90" fill="#78350f" font-size="13">readings · accounts · rules</text>
-
-    <rect x="760" y="140" width="210" height="80" rx="10" fill="#ede9fe" stroke="#7c3aed"/>
-    <text x="865" y="178" font-weight="700" fill="#4c1d95">Web dashboard</text>
-    <text x="865" y="200" fill="#4c1d95" font-size="13">live charts · CSV export</text>
-
-    <rect x="760" y="250" width="210" height="80" rx="10" fill="#fce7f3" stroke="#db2777"/>
-    <text x="865" y="288" font-weight="700" fill="#831843">Telegram + Gemini</text>
-    <text x="865" y="310" fill="#831843" font-size="13">ask about your sensors</text>
+  <rect x="1" y="1" width="998" height="548" rx="12" fill="#f8fafc" stroke="#e2e8f0"/>
+  <g text-anchor="middle" font-size="13">
+    <rect x="25" y="30" width="235" height="160" rx="10" fill="#e0f2fe" stroke="#0284c7"/>
+    <text x="142" y="59" font-size="15" font-weight="700" fill="#0c4a6e">Milesight sensors + controllers</text>
+    <g fill="#0c4a6e">
+      <text x="142" y="84">EM300 / EM320 / EM400 / EM500</text>
+      <text x="142" y="106">AM300 / WS523 / UC300</text>
+      <text x="142" y="128">CT101 / CT103 / CT301</text>
+      <text x="142" y="150">TS201 / TS301 / TS302</text>
+      <text x="142" y="172">VS121 / VS125 / VS133 / WTS506</text>
+    </g>
+    <rect x="25" y="300" width="235" height="125" rx="10" fill="#e0f2fe" stroke="#0284c7"/>
+    <text x="142" y="330" font-size="15" font-weight="700" fill="#0c4a6e">Milesight gateway</text>
+    <text x="142" y="355" fill="#0c4a6e">Embedded Network Server</text>
+    <text x="142" y="379" fill="#0c4a6e">Per-model payload codec</text>
+    <text x="142" y="403" fill="#0c4a6e">MQTT uplink + downlink topics</text>
+    <rect x="355" y="185" width="285" height="180" rx="10" fill="#dcfce7" stroke="#16a34a"/>
+    <text x="497" y="216" font-size="16" font-weight="700" fill="#14532d">Milesight Dashboard server</text>
+    <g fill="#14532d">
+      <text x="497" y="244">MQTT broker :1883 / :8883</text>
+      <text x="497" y="269">Readings + device identification</text>
+      <text x="497" y="294">Owner-authorized command publication</text>
+      <text x="497" y="319">Command validation + history</text>
+      <text x="497" y="344">Web server :8080</text>
+    </g>
+    <rect x="755" y="30" width="220" height="110" rx="10" fill="#fef3c7" stroke="#d97706"/>
+    <text x="865" y="61" font-size="15" font-weight="700" fill="#78350f">Firebase Firestore</text>
+    <text x="865" y="87" fill="#78350f">Readings + command history</text>
+    <text x="865" y="112" fill="#78350f">Accounts + access rules</text>
+    <rect x="755" y="225" width="220" height="105" rx="10" fill="#ede9fe" stroke="#7c3aed"/>
+    <text x="865" y="254" font-size="15" font-weight="700" fill="#4c1d95">Web dashboard</text>
+    <text x="865" y="280" fill="#4c1d95">Live charts + CSV export</text>
+    <text x="865" y="305" fill="#4c1d95">Command preview + history</text>
+    <rect x="755" y="410" width="220" height="92" rx="10" fill="#fce7f3" stroke="#db2777"/>
+    <text x="865" y="443" font-size="15" font-weight="700" fill="#831843">Telegram + Gemini</text>
+    <text x="865" y="472" fill="#831843">Ask about workspace sensors</text>
+    <rect x="25" y="470" width="615" height="55" rx="10" fill="#f1f5f9" stroke="#94a3b8"/>
+    <text x="332" y="493" font-weight="700" fill="#334155">Local demo :8081 · npm run demo · 24 sample devices</text>
+    <text x="332" y="513" font-size="12" fill="#475569">Simulated readings and commands · No Firebase or gateway required</text>
   </g>
-  <g stroke="#475569" stroke-width="2" fill="none" marker-end="url(#a)">
-    <path d="M115 130 V220"/>
-    <path d="M200 265 L340 215"/>
-    <path d="M600 150 L760 75"/>
-    <path d="M600 180 L760 180"/>
-    <path d="M600 215 L760 285"/>
+  <g stroke="#475569" stroke-width="2" fill="none" marker-end="url(#up)">
+    <path d="M80 190V300"/>
+    <path d="M260 325L355 259"/>
+    <path d="M640 211L755 100"/>
+    <path d="M640 260H755"/>
+    <path d="M775 140V225"/>
+    <path d="M640 344L755 449"/>
+  </g>
+  <g stroke="#0f766e" stroke-width="2" fill="none" marker-end="url(#down)">
+    <path d="M205 300V190"/>
+    <path d="M355 305L260 382"/>
+    <path d="M755 302H640"/>
   </g>
   <g font-size="12" fill="#475569">
-    <text x="125" y="180">LoRaWAN</text>
-    <text x="235" y="225">MQTT</text>
+    <text x="30" y="233">Readings</text>
+    <text x="98" y="274">LoRaWAN</text>
+    <text x="273" y="285">Uplink</text>
+    <text x="650" y="248">Web page</text>
+    <text x="790" y="183">Live data + history</text>
+    <text x="651" y="135">Store data</text>
   </g>
+  <g font-size="12" fill="#0f766e">
+    <text x="215" y="243">Commands</text>
+    <text x="289" y="377">Downlink</text>
+    <text x="650" y="323">Commands</text>
+  </g>
+  <text x="355" y="400" font-size="12" fill="#475569">Published to MQTT does not confirm sensor execution.</text>
 </svg>
