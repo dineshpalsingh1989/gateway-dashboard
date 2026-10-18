@@ -1,0 +1,28 @@
+name: Install test
+
+on:
+  push:
+    paths: ['install.sh', 'Dockerfile', 'docker-compose.yml', '.github/workflows/install-test.yml']
+  workflow_dispatch:
+
+jobs:
+  install:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run installer
+        run: sh install.sh
+        env:
+          MILESIGHT_DIR: ${{ runner.temp }}/milesight
+      - name: Check dashboard responds
+        run: |
+          for i in $(seq 1 30); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/setup || true)
+            echo "attempt $i: HTTP $code"
+            if [ "$code" = "200" ]; then exit 0; fi
+            sleep 2
+          done
+          docker logs milesight-dashboard
+          exit 1
+      - name: Check MQTT port open
+        run: timeout 5 bash -c '</dev/tcp/127.0.0.1/1883'
