@@ -11,7 +11,12 @@ permissions:
   packages: write
 
 jobs:
+  checks:
+    uses: ./.github/workflows/ci.yml
+  install:
+    uses: ./.github/workflows/install-test.yml
   docker:
+    needs: [checks, install]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

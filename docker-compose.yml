@@ -4,6 +4,13 @@ services:
     image: ghcr.io/dineshpalsingh1989/milesight-dashboard:latest
     container_name: milesight-dashboard
     restart: unless-stopped
+    user: "${MILESIGHT_UID:-1000}:${MILESIGHT_GID:-1000}"
+    init: true
+    stop_grace_period: 15s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     ports:
       - "1883:1883"
       - "8883:8883"

@@ -5,3 +5,9 @@ serviceAccountKey.json
 firebase.local.json
 docs
 test
+data
+**/.env
+**/serviceAccountKey.json
+**/firebase.local.json
+**/*.log
+**/*.tmp

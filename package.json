@@ -6,7 +6,7 @@
   "main": "milesight.js",
   "scripts": {
     "start": "node milesight.js",
-    "check": "node --check milesight.js && node --check firebase-setup.js",
+    "check": "node --check milesight.js && node --check firebase-setup.js && node --check runtime.js",
     "test": "node --test"
   },
   "engines": {

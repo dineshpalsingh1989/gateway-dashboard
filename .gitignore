@@ -5,3 +5,4 @@ firebase.local.json
 firebase.local.json.tmp
 firebase-debug.log
 firestore-debug.log
+data/

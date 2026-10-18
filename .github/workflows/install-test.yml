@@ -1,19 +1,22 @@
 name: Install test
 
 on:
+  workflow_call:
+  pull_request:
   push:
-    paths: ['install.sh', 'Dockerfile', 'docker-compose.yml', '.github/workflows/install-test.yml']
   workflow_dispatch:
 
 jobs:
   install:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - name: Run installer
         run: sh install.sh
         env:
           MILESIGHT_DIR: ${{ runner.temp }}/milesight
+          MILESIGHT_SOURCE_DIR: ${{ github.workspace }}
       - name: Check dashboard responds
         run: |
           for i in $(seq 1 30); do
@@ -24,5 +27,38 @@ jobs:
           done
           docker logs milesight-dashboard
           exit 1
-      - name: Check MQTT port open
-        run: timeout 5 bash -c '</dev/tcp/127.0.0.1/1883'
+      - name: Check setup mode and non-root container
+        run: |
+          test "$(docker exec milesight-dashboard id -u)" != "0"
+          docker exec milesight-dashboard node --input-type=module -e "
+            import net from 'node:net';
+            const socket = net.connect(1883, '127.0.0.1');
+            socket.setTimeout(3000);
+            socket.on('connect', () => { console.error('MQTT must stay offline before setup'); process.exit(1) });
+            socket.on('error', error => process.exit(error.code === 'ECONNREFUSED' ? 0 : 1));
+            socket.on('timeout', () => process.exit(1));"
+      - name: Check clean shutdown
+        # Exercise setup saving against the freshly built image, without real credentials.
+        run: |
+          docker exec milesight-dashboard node --input-type=module -e "
+            import { readFileSync } from 'node:fs';
+            const token = readFileSync('.env', 'utf8').match(/^FIREBASE_SETUP_TOKEN=(.+)$/m)[1].trim();
+            const url = 'http://127.0.0.1:8080/setup/';
+            const denied = await fetch(url + 'config');
+            if (denied.status !== 401) throw Error('Setup must require a token');
+            const config = { web: { apiKey: 'ci-only-not-a-key', projectId: 'demo-milesight', authDomain: 'demo-milesight.firebaseapp.com', appId: '1:123:web:ci' }, keyPath: './serviceAccountKey.json' };
+            const headers = { 'x-setup-token': token, 'content-type': 'application/json' };
+            const saved = await fetch(url + 'save', { method: 'POST', headers, body: JSON.stringify(config) });
+            if (!saved.ok) throw Error('Non-root container could not save settings');
+            const loaded = await (await fetch(url + 'config', { headers })).json();
+            if (loaded.web.projectId !== config.web.projectId || !loaded.restartRequired) throw Error('Settings were not saved');"
+      - name: Stop container cleanly
+        run: |
+          docker stop --time 15 milesight-dashboard
+          test "$(docker inspect --format '{{.State.ExitCode}}' milesight-dashboard)" = "0"
+      - name: Container logs
+        if: failure()
+        run: docker logs milesight-dashboard
+      - name: Cleanup
+        if: always()
+        run: docker rm -f milesight-dashboard || true

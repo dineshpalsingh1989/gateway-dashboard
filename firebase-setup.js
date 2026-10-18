@@ -2,6 +2,7 @@ import http from 'node:http'
 import { readFileSync, writeFileSync, renameSync, existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { randomBytes, timingSafeEqual } from 'node:crypto'
+import { installShutdown } from './runtime.js'
 
 export const webFields = ['apiKey', 'authDomain', 'projectId', 'appId', 'storageBucket', 'messagingSenderId', 'databaseURL']
 export const envFields = ['API_KEY', 'AUTH_DOMAIN', 'PROJECT_ID', 'APP_ID', 'STORAGE_BUCKET', 'MESSAGING_SENDER_ID', 'DATABASE_URL']
@@ -162,6 +163,8 @@ export function createSetupHandler(current, { token = process.env.FIREBASE_SETUP
 
 export function startSetupServer(port, current) {
   const handler = createSetupHandler(current, { bootstrap: true })
-  return http.createServer((req, res) => { handler(req, res).catch(() => { res.writeHead(500); res.end('Setup failed') }) })
+  const server = http.createServer((req, res) => { handler(req, res).catch(() => { res.writeHead(500); res.end('Setup failed') }) })
     .listen(port, () => console.log('[setup] Open http://localhost:' + port + '/setup to configure Firebase, then restart.'))
+  installShutdown(() => new Promise(resolve => server.close(resolve)))
+  return server
 }
