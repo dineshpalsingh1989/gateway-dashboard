@@ -1,5 +1,7 @@
 # Milesight Dashboard
 
+Current release: **V2.0** (`2.0.0`). Includes Firebase setup, connection testing, and responsive styling with automatic dark mode.
+
 <p align="center"><img src="docs/banner.svg" alt="Milesight Dashboard" width="100%"></p>
 
 ![Node](https://img.shields.io/badge/node-%3E%3D18-339933?logo=node.js&logoColor=white)

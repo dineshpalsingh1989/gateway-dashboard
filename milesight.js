@@ -39,12 +39,13 @@ import { readSavedConfig, createSetupHandler, startSetupServer } from './firebas
 // /health, and in the startup log, so "which build is actually running?" is
 // never a guess again. BUILD is the date the version was cut.
 
-const VERSION = '2.4.1'
+const VERSION = '2.0.0'
 const BUILD = '2026-10-18'
 
 // What changed, newest first. Kept here so the running server can tell you
 // its own history - no changelog file to lose track of.
 const CHANGES = [
+  ['2.0.0', 'Current release renamed V2.0 at the administrator\'s request. Includes protected Firebase setup, connection tests, saved settings, authorization rules, history fixes, and responsive setup styling with dark mode. Earlier version labels below are retained as build history.'],
   ['2.4.1', 'Polished Firebase setup with unsaved-change protection, clear save and restart status, locked fields during requests, actionable connection errors, and correct reloading of saved settings.'],
   ['2.4.0', 'Removed the bundled Firebase project configuration. Added a protected Firebase setup page with configuration import, connection tests, local saving, and first-run setup before sign-in.'],
   ['2.3.0', 'Added deployable Firestore access rules and authorization regression tests. History now keeps the latest selection, labels the 500-reading limit, disables empty or loading exports, and offers retry on failure. Hardened HTML escaping and self-test requests, refreshed verified email tokens, and cleaned up debug refresh timers.'],
@@ -52,7 +53,7 @@ const CHANGES = [
   ['2.2.0', 'Sign up and sign in entirely from Telegram: the bot asks for your email, then the code your administrator gave you, then a password, and creates the Firebase account. Sessions expire after a period the admin chooses in Settings, after which the bot asks for the password again. Password messages are deleted from the chat the moment they are read, are never written to the debug log, and are checked against Firebase rather than stored.'],
   ['2.1.0', 'The bot now talks you through signing in instead of expecting /start with a code. Say hello, it asks for your email, tells you whether that address is allowed here, and asks for the code once. After that it remembers you and never asks again. Signing in only happens in a private chat, so nobody\'s email address ends up in a group.'],
   ['2.0.1', 'Adding a member now gives you an invite link to send them. It carries the workspace name and which address to sign in with, and pre-fills the form when they open it - but it grants nothing on its own, so it is safe to send over any messenger.'],
-  ['2.0.0', 'Members. An admin adds email addresses in Settings and those people can use the Telegram assistant; anyone else is refused, including someone sitting in the same group chat. Telegram now binds per person rather than per chat, which is what makes that possible. Somebody with no workspace can request access to one by name and the admin approves them. Email addresses must be verified first, so nobody can claim to be a colleague. Removing a member cuts them off on their next message.'],
+  ['2.0.0 (earlier build)', 'Members. An admin adds email addresses in Settings and those people can use the Telegram assistant; anyone else is refused, including someone sitting in the same group chat. Telegram now binds per person rather than per chat, which is what makes that possible. Somebody with no workspace can request access to one by name and the admin approves them. Email addresses must be verified first, so nobody can claim to be a colleague. Removing a member cuts them off on their next message.'],
   ['1.9.1', 'New Firebase web API key, replacing the one that had been deleted in Google Cloud and was stopping anyone signing in.'],
   ['1.9.0', 'The Firebase web config now lives in a FIREBASE_WEB block at the top of this file, so it is one place to edit. Anything set in .env still wins, so existing installs are unaffected. None of those values are secret - they ship in every visitor\'s JavaScript by design.'],
   ['1.8.3', 'The dead-key message now points at the Google Cloud credentials page rather than the Firebase console, which keeps displaying a key after it has been deleted and sends you in a circle pasting the same broken value back.'],

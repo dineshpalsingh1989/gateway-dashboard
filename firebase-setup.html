@@ -9,6 +9,43 @@
 <style>
 .status{display:inline-flex;align-items:center;border-radius:999px;padding:6px 12px;font-size:12px;font-weight:650;background:#e8eeea;color:#455f50}.status[data-state="dirty"]{background:#fff3d2;color:#795614}.status[data-state="saved"]{background:#e1f2e7;color:#176740}fieldset{border:0;padding:0;margin:0;min-width:0}fieldset:disabled{opacity:.7}.actions button{min-height:44px}input,textarea{scroll-margin-top:24px}#results{overflow-wrap:anywhere}#message:empty{display:none}
 </style>
+<style>
+body{background:radial-gradient(ellipse at top left,#dcefe3 0,transparent 48%),#f3f6f4}
+main{counter-reset:setup}
+header{padding:24px 26px;border:1px solid #d6e5db;border-radius:20px;background:linear-gradient(130deg,#ffffffed,#eaf5ee);box-shadow:0 8px 30px #203b2b08}
+header>a{text-decoration:none;font-size:13px;font-weight:600}header>a:hover{text-decoration:underline}
+.card{counter-increment:setup;transition:border-color .18s ease,box-shadow .18s ease}
+.card:focus-within{border-color:#82b69a;box-shadow:0 4px 24px #2767430e}
+.card h2{display:flex;align-items:center;gap:10px}
+.card h2::before{content:counter(setup);display:inline-grid;place-items:center;width:27px;height:27px;flex-shrink:0;border-radius:8px;font-size:12px;background:#e5f2e9;color:#246146}
+button{transition:background .15s ease,border-color .15s ease,box-shadow .15s ease}
+button:hover:not(:disabled){background:#e5f0e9;border-color:#7fa58f;box-shadow:0 2px 8px #173e2710}
+button.primary:hover:not(:disabled){background:#154d38;border-color:#154d38}
+button:active:not(:disabled){box-shadow:inset 0 2px 4px #16372418}
+summary{padding:9px 0}details[open]>summary{margin-bottom:10px}
+#save-state{margin-bottom:4px}#results:not(:empty){margin-top:18px;padding:0 16px;border:1px solid #dce5df;border-radius:10px;background:#f8fbf9}
+@media(max-width:600px){header{padding:20px}.actions{gap:8px}.actions button{flex:1 1 180px}.status{max-width:100%}input,textarea{font-size:16px}}
+@media(prefers-color-scheme:dark){
+  :root{color-scheme:dark;color:#e1eae5;background:#111c17}
+  body{background:radial-gradient(ellipse at top left,#19372a 0,transparent 48%),#111c17}
+  header{background:linear-gradient(130deg,#1b3025,#18281f);border-color:#345040;box-shadow:none}
+  a,.eyebrow{color:#96d7b4}p,small,.checklist{color:#b3c6b9}
+  .card{background:#1a2921;border-color:#364d3f;box-shadow:none}.card:focus-within{border-color:#83bd9c}
+  .card h2::before{background:#294a37;color:#b2e1c5}
+  input,textarea{background:#132019;border-color:#4a6654;color:#edf4ef}
+  input::placeholder,textarea::placeholder{color:#8da595}
+  input:focus,textarea:focus,button:focus-visible{outline-color:#66a580}
+  button{background:#253d2e;border-color:#57755f;color:#d2e9da}
+  button:hover:not(:disabled){background:#34553f;border-color:#86af94;box-shadow:none}
+  button.primary{background:#8bc7a2;color:#12251a;border-color:#8bc7a2}
+  button.primary:hover:not(:disabled){background:#a7dcbb;border-color:#a7dcbb}
+  .status{background:#2b4032;color:#d0e2d6}.status[data-state="dirty"]{background:#4d3d1b;color:#ffe1a1}.status[data-state="saved"]{background:#254b33;color:#b0e4c0}
+  .note{background:#372d18;color:#eed18a;border-color:#be9c45}
+  .pass{color:#a0dfb5}.fail{color:#ffb2a7}
+  #results:not(:empty){background:#14231a;border-color:#364d3f}.result{border-color:#364d3f}
+}
+@media(prefers-reduced-motion:reduce){.card,button{transition:none}}
+</style>
 </head>
 <body><main>
 <header><a href="/">← Dashboard</a><p class="eyebrow">MILESIGHT / SERVER SETTINGS</p><h1>Connect Firebase</h1><p>Configure the Firebase project used by this dashboard. Test your connection before saving. Changes apply after a server restart.</p></header>
