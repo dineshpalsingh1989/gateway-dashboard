@@ -1,6 +1,6 @@
 #!/usr/bin/env sh
 # One-command installer for Linux:
-#   curl -fsSL https://raw.githubusercontent.com/dineshpalsingh1989/milesight-dashboard/main/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/dineshpalsingh1989/gateway-dashboard/main/install.sh | sh
 set -eu
 
 DIR="${MILESIGHT_DIR:-$HOME/milesight-dashboard}"
@@ -35,7 +35,7 @@ if [ -n "$SOURCE_DIR" ]; then
     cp "$SOURCE_DIR/$file" "$DIR/$file"
   done
 else
-  curl -fsSL "https://github.com/dineshpalsingh1989/milesight-dashboard/archive/refs/heads/main.tar.gz" \
+  curl -fsSL "https://github.com/dineshpalsingh1989/gateway-dashboard/archive/refs/heads/main.tar.gz" \
     | tar -xz --strip-components=1
 fi
 

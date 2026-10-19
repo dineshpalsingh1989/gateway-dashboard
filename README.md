@@ -2,17 +2,17 @@
 
 <p align="center"><img src="docs/banner.svg" alt="DP Sensor Hub" width="100%"></p>
 
-[![CI](https://github.com/dineshpalsingh1989/milesight-dashboard/actions/workflows/ci.yml/badge.svg)](https://github.com/dineshpalsingh1989/milesight-dashboard/actions/workflows/ci.yml)
-[![Install test](https://github.com/dineshpalsingh1989/milesight-dashboard/actions/workflows/install-test.yml/badge.svg)](https://github.com/dineshpalsingh1989/milesight-dashboard/actions/workflows/install-test.yml)
-[![Package build](https://github.com/dineshpalsingh1989/milesight-dashboard/actions/workflows/package.yml/badge.svg)](https://github.com/dineshpalsingh1989/milesight-dashboard/actions/workflows/package.yml)
+[![CI](https://github.com/dineshpalsingh1989/gateway-dashboard/actions/workflows/ci.yml/badge.svg)](https://github.com/dineshpalsingh1989/gateway-dashboard/actions/workflows/ci.yml)
+[![Install test](https://github.com/dineshpalsingh1989/gateway-dashboard/actions/workflows/install-test.yml/badge.svg)](https://github.com/dineshpalsingh1989/gateway-dashboard/actions/workflows/install-test.yml)
+[![Package build](https://github.com/dineshpalsingh1989/gateway-dashboard/actions/workflows/package.yml/badge.svg)](https://github.com/dineshpalsingh1989/gateway-dashboard/actions/workflows/package.yml)
 
-[Releases](https://github.com/dineshpalsingh1989/milesight-dashboard/releases) · [Report a bug](https://github.com/dineshpalsingh1989/milesight-dashboard/issues/new/choose) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md)
+[Releases](https://github.com/dineshpalsingh1989/gateway-dashboard/releases) · [Report a bug](https://github.com/dineshpalsingh1989/gateway-dashboard/issues/new/choose) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md)
 
 A self-hosted MQTT broker and live dashboard for **Milesight gateways and sensors**, with Firebase cloud or DuckDB local storage and Telegram command buttons or optional Gemini AI.
 
 **DP Sensor Hub is an independent project, not affiliated with or endorsed by Milesight. Milesight is a trademark of its respective owner.**
 
-The GitHub repository currently remains `milesight-dashboard`; installation and demo links below use that address. Existing installation paths, database names, and environment variables remain supported.
+The GitHub repository is `gateway-dashboard`; installation and demo links below use that address. Existing installation paths, database names, and environment variables remain supported.
 
 **v2.1.1 supports local and cloud operation:** choose **DuckDB on your own server** or **Firebase Firestore in the cloud**. Choose **Telegram command buttons without AI** or **Gemini AI** independently of storage. Settings shows server disk, database size, and memory usage.
 
@@ -48,7 +48,7 @@ broker → gateway → sensor.
 
 ## Try the dashboard demo
 
-**[Open the public dashboard demo](https://dineshpalsingh1989.github.io/milesight-dashboard/)**
+**[Open the public dashboard demo](https://dineshpalsingh1989.github.io/gateway-dashboard/)**
 
 The GitHub Pages demo runs entirely in your browser. Explore the sample sensors,
 charts, CSV export, and simulated device controls without installing anything.
@@ -59,8 +59,8 @@ To run the same demo locally:
 Use Node.js 22 or 24:
 
 ```sh
-git clone https://github.com/dineshpalsingh1989/milesight-dashboard.git
-cd milesight-dashboard
+git clone https://github.com/dineshpalsingh1989/gateway-dashboard.git
+cd gateway-dashboard
 npm ci
 npm run demo
 ```
@@ -86,7 +86,7 @@ sensor ingestion and commands require the self-hosted backend described below.
 ## Install on Linux
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/dineshpalsingh1989/milesight-dashboard/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/dineshpalsingh1989/gateway-dashboard/main/install.sh | sh
 ```
 
 The installer installs Docker if needed, starts the dashboard, and prints the setup URL and administrator token. Files are installed under `~/milesight-dashboard`.
@@ -217,8 +217,8 @@ network servers such as ChirpStack need a separate integration.
 Use Node.js 22 or 24, which are checked in CI.
 
 ```sh
-git clone https://github.com/dineshpalsingh1989/milesight-dashboard.git
-cd milesight-dashboard
+git clone https://github.com/dineshpalsingh1989/gateway-dashboard.git
+cd gateway-dashboard
 npm ci
 npm start
 ```

@@ -1,5 +1,5 @@
 blank_issues_enabled: false
 contact_links:
   - name: Report a security vulnerability privately
-    url: https://github.com/dineshpalsingh1989/milesight-dashboard/security/advisories/new
+    url: https://github.com/dineshpalsingh1989/gateway-dashboard/security/advisories/new
     about: Use a private report instead of a public issue. See SECURITY.md if this link is unavailable.
