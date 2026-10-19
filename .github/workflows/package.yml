@@ -68,4 +68,4 @@ jobs:
             try { existing = await github.rest.repos.getReleaseByTag({ ...context.repo, tag }); }
             catch (error) { if (error.status !== 404) throw error; }
             if (existing) core.info('Release already exists; preserving its contents.');
-            else await github.rest.repos.createRelease({ ...context.repo, tag_name: tag, name: `Milesight Dashboard ${tag}`, body, draft: false, prerelease: false });
+            else await github.rest.repos.createRelease({ ...context.repo, tag_name: tag, name: `DP Sensor Hub ${tag}`, body, draft: false, prerelease: false });

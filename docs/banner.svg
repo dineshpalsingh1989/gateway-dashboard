@@ -1,24 +1,20 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="220" viewBox="0 0 1000 220" font-family="Segoe UI, Arial, sans-serif">
-  <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#0b2a4a"/>
-      <stop offset="1" stop-color="#0f7b6c"/>
-    </linearGradient>
-  </defs>
-  <rect width="1000" height="220" rx="16" fill="url(#bg)"/>
-  <g fill="none" stroke="#7fe3d0" stroke-width="3" stroke-linecap="round" opacity="0.9">
-    <circle cx="110" cy="110" r="10" fill="#7fe3d0"/>
-    <path d="M85 85 A35 35 0 0 0 85 135"/>
-    <path d="M135 85 A35 35 0 0 1 135 135"/>
-    <path d="M65 65 A60 60 0 0 0 65 155"/>
-    <path d="M155 65 A60 60 0 0 1 155 155"/>
-  </g>
-  <text x="210" y="105" font-size="48" font-weight="700" fill="#ffffff">Milesight Dashboard</text>
-  <text x="212" y="145" font-size="20" fill="#cfeee8">MQTT broker + live dashboard + Firestore for Milesight IoT sensors</text>
-  <g font-size="14" fill="#0b2a4a" font-weight="600">
-    <rect x="212" y="165" width="90" height="26" rx="13" fill="#7fe3d0"/><text x="231" y="183">LoRaWAN</text>
-    <rect x="312" y="165" width="70" height="26" rx="13" fill="#7fe3d0"/><text x="327" y="183">MQTT</text>
-    <rect x="392" y="165" width="90" height="26" rx="13" fill="#7fe3d0"/><text x="406" y="183">Firebase</text>
-    <rect x="492" y="165" width="90" height="26" rx="13" fill="#7fe3d0"/><text x="506" y="183">Telegram</text>
+﻿<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="360" viewBox="0 0 1200 360" role="img" aria-labelledby="title desc" font-family="Segoe UI, Arial, sans-serif">
+  <title id="title">DP Sensor Hub — dashboard for Milesight gateways and sensors</title>
+  <desc id="desc">Original navy dashboard illustration with live temperature, connected gateway, and sensor activity. MQTT, local or cloud storage, and Telegram controls.</desc>
+  <defs><linearGradient id="bg" x2="1" y2="1"><stop stop-color="#0b162b"/><stop offset="1" stop-color="#163958"/></linearGradient><linearGradient id="chart" x2="0" y2="1"><stop stop-color="#38d9c5" stop-opacity=".3"/><stop offset="1" stop-color="#38d9c5" stop-opacity="0"/></linearGradient></defs>
+  <rect width="1200" height="360" rx="24" fill="url(#bg)"/>
+  <circle cx="1110" cy="35" r="180" fill="#38d9c5" opacity=".04"/>
+  <text x="50" y="60" font-size="13" letter-spacing="3" fill="#55e4ce">YOUR SENSORS. YOUR SERVER.</text>
+  <text x="48" y="127" font-size="52" font-weight="700" fill="#f4f8ff">DP Sensor Hub</text>
+  <text x="50" y="170" font-size="20" fill="#c2d3e7">For Milesight gateways and sensors</text>
+  <text x="50" y="205" font-size="17" fill="#93abc4">Live readings, history and device controls.</text>
+  <g font-size="14" fill="#d7e8f8"><rect x="50" y="235" width="80" height="32" rx="16" fill="#24435e"/><text x="69" y="257">MQTT</text><rect x="140" y="235" width="154" height="32" rx="16" fill="#24435e"/><text x="157" y="257">Local or cloud</text><rect x="304" y="235" width="106" height="32" rx="16" fill="#24435e"/><text x="322" y="257">Telegram</text></g>
+  <text x="50" y="318" font-size="12" fill="#93abc4">Independent project · Not affiliated with or endorsed by Milesight</text>
+  <g transform="translate(655 43)"><rect width="495" height="274" rx="18" fill="#101f34" stroke="#35506b"/><circle cx="23" cy="23" r="4" fill="#55e4ce"/><text x="37" y="28" font-size="12" fill="#bbd1e8">SENSOR OVERVIEW</text><text x="386" y="28" font-size="11" fill="#55e4ce">LIVE DATA</text>
+    <rect x="20" y="47" width="217" height="84" rx="10" fill="#1a3048"/><text x="35" y="70" font-size="12" fill="#a9bfd6">Temperature</text><text x="35" y="109" font-size="30" fill="#ffffff">24.6 °C</text><path d="M145 106 L158 97 170 100 184 83 198 89 218 76" fill="none" stroke="#55e4ce" stroke-width="3"/>
+    <rect x="250" y="47" width="225" height="84" rx="10" fill="#1a3048"/><text x="265" y="70" font-size="12" fill="#a9bfd6">Gateway connection</text><circle cx="272" cy="100" r="5" fill="#55e4ce"/><text x="286" y="106" font-size="20" fill="#ffffff">Connected</text>
+    <text x="22" y="157" font-size="12" fill="#a9bfd6">SENSOR ACTIVITY</text><path d="M23 241 H473 M23 211 H473 M23 181 H473" stroke="#263c55"/>
+    <path d="M23 230 L65 224 106 232 147 199 188 208 229 185 270 194 311 177 352 192 393 172 434 182 473 163 V249 H23Z" fill="url(#chart)"/>
+    <path d="M23 230 L65 224 106 232 147 199 188 208 229 185 270 194 311 177 352 192 393 172 434 182 473 163" fill="none" stroke="#55e4ce" stroke-width="3" stroke-linejoin="round"/>
   </g>
 </svg>
