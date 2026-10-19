@@ -1,6 +1,6 @@
 # Security reporting
 
-Report suspected vulnerabilities through [GitHub private vulnerability reporting](https://github.com/dineshpalsingh1989/milesight-dashboard/security/advisories/new). Do not disclose exploit details, credentials, or customer data in public issues.
+Report suspected vulnerabilities through [GitHub private vulnerability reporting](https://github.com/dineshpalsingh1989/gateway-dashboard/security/advisories/new). Do not disclose exploit details, credentials, or customer data in public issues.
 
 Private vulnerability reporting is enabled for this repository. Use the link above to submit a confidential report.
 
