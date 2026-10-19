@@ -1,6 +1,6 @@
-﻿# Milesight Dashboard v2.1.1
+# DP Sensor Hub v2.1.1
 
-<p align="center"><img src="docs/banner.svg" alt="Milesight Dashboard" width="100%"></p>
+<p align="center"><img src="docs/banner.svg" alt="DP Sensor Hub" width="100%"></p>
 
 [![CI](https://github.com/dineshpalsingh1989/milesight-dashboard/actions/workflows/ci.yml/badge.svg)](https://github.com/dineshpalsingh1989/milesight-dashboard/actions/workflows/ci.yml)
 [![Install test](https://github.com/dineshpalsingh1989/milesight-dashboard/actions/workflows/install-test.yml/badge.svg)](https://github.com/dineshpalsingh1989/milesight-dashboard/actions/workflows/install-test.yml)
@@ -8,7 +8,11 @@
 
 [Releases](https://github.com/dineshpalsingh1989/milesight-dashboard/releases) · [Report a bug](https://github.com/dineshpalsingh1989/milesight-dashboard/issues/new/choose) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md)
 
-A self-hosted MQTT broker and live dashboard for Milesight gateways, with Firebase cloud or DuckDB local storage and Telegram command buttons or optional Gemini AI.
+A self-hosted MQTT broker and live dashboard for **Milesight gateways and sensors**, with Firebase cloud or DuckDB local storage and Telegram command buttons or optional Gemini AI.
+
+**DP Sensor Hub is an independent project, not affiliated with or endorsed by Milesight. Milesight is a trademark of its respective owner.**
+
+The GitHub repository currently remains `milesight-dashboard`; installation and demo links below use that address. Existing installation paths, database names, and environment variables remain supported.
 
 **v2.1.1 supports local and cloud operation:** choose **DuckDB on your own server** or **Firebase Firestore in the cloud**. Choose **Telegram command buttons without AI** or **Gemini AI** independently of storage. Settings shows server disk, database size, and memory usage.
 

@@ -72,7 +72,7 @@ IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
 IP="${IP:-localhost}"
 cat <<EOF
 
-Milesight Dashboard is running.
+DP Sensor Hub is running.
 
   Dashboard / setup:  http://$IP:8080/setup
   Setup token:        $TOKEN

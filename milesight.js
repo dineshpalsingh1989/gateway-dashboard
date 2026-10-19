@@ -788,7 +788,7 @@ async function pruneOldest(uid, devId, count) {
 
 const mqttServer = createServer(aedes.handle).listen(CFG.mqttPort, () => {
   console.log('')
-  console.log('  Milesight Dashboard v' + VERSION + '  (build ' + BUILD + ')')
+  console.log('  DP Sensor Hub v' + VERSION + '  (build ' + BUILD + ')')
   console.log('  MQTT broker   mqtt://0.0.0.0:' + CFG.mqttPort)
   if (CFG.brokerDomain) console.log('  tenant hosts  *.' + CFG.brokerDomain)
   else if (SERVER_HOST) console.log('  gateways dial ' + SERVER_HOST + ':' + CFG.mqttPort)
@@ -1789,7 +1789,7 @@ const PAGE = String.raw`<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Milesight Dashboard</title>
+<title>DP Sensor Hub</title>
 <style>
   /* Metric colours. Validated with the palette checker for every group that
      actually appears together on one device (EM300-TH, AM300, WS523, UC300),
@@ -2226,8 +2226,8 @@ const PAGE = String.raw`<!doctype html>
 <!-- ============ LOGIN ============ -->
 <div class="auth" id="v-login">
   <form class="authcard" id="f-login">
-    <h1>Milesight Dashboard</h1>
-    <p>Sign in to your workspace.</p>
+    <h1>DP Sensor Hub</h1>
+    <p>For Milesight gateways and sensors. Sign in to your workspace.</p>
     <div class="invite" data-invite-note hidden></div>
     <label for="li-email">Email</label>
     <input id="li-email" type="email" required autocomplete="email">
@@ -2251,6 +2251,7 @@ const PAGE = String.raw`<!doctype html>
          first question, and needing an account to answer it is backwards. -->
     <div class="whatis-body" id="about-body" hidden>
       <h2>A dashboard for your own sensors</h2>
+      <p>DP Sensor Hub is an independent project, not affiliated with or endorsed by Milesight. Milesight is a trademark of its respective owner.</p>
       <p>It receives readings from Milesight LoRaWAN sensors &mdash; temperature,
          occupancy, door contacts and the rest &mdash; and shows them live, with
          history you can chart and export.</p>
@@ -2421,7 +2422,7 @@ const PAGE = String.raw`<!doctype html>
 <!-- ============ APP ============ -->
 <div class="wrap" id="v-app" hidden>
   <header>
-    <div class="brand"><span class="dot"></span>Milesight Dashboard</div>
+    <div class="brand"><span class="dot"></span>DP Sensor Hub</div>
     <div class="tabs">
       <button class="on" data-tab="dash" type="button">Dashboard</button>
       <button data-tab="set" type="button">Settings</button>
@@ -2817,7 +2818,7 @@ async function pollHealth() {
     setLed('srv', 'bad', 'Server down')
     setLed('mq', 'bad', 'Broker')
     setLed('fs', 'bad', 'Database')
-    ledNote('Cannot reach the server. It may have stopped - check: milesight status')
+    ledNote('Cannot reach the server. It may have stopped - check the server or Docker logs')
     renderAbout(null)
     return
   }
