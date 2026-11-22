@@ -3,6 +3,26 @@
 #   curl -fsSL https://raw.githubusercontent.com/dineshpalsingh1989/gateway-dashboard/main/install.sh | sh
 set -eu
 
+banner() {
+  if [ -t 1 ]; then G="$(printf '\033[1;32m')"; C="$(printf '\033[1;36m')"; R="$(printf '\033[0m')"; else G=""; C=""; R=""; fi
+  printf '\n%s' "$G"
+  cat <<'ART'
+ ____   ____     ____                                    _   _         _
+|  _ \ |  _ \   / ___|   ___  _ __   ___   ___   _ __   | | | | _   _ | |__
+| | | || |_) |  \___ \  / _ \| '_ \ / __| / _ \ | '__|  | |_| || | | || '_ \
+| |_| ||  __/    ___) ||  __/| | | |\__ \| (_) || |     |  _  || |_| || |_) |
+|____/ |_|      |____/  \___||_| |_||___/ \___/ |_|     |_| |_| \__,_||_.__/
+ART
+  printf '%s\n%s  ////////////////////  by Dineshpal Singh  ////////////////////%s\n' "$R" "$C" "$R"
+  printf '  Milesight IoT dashboard  -  github.com/dineshpalsingh1989/gateway-dashboard\n\n'
+}
+banner
+
+# New installs store everything on this server (DuckDB): no cloud account needed.
+# Set MILESIGHT_STORAGE=firebase to start with the Firebase setup page instead.
+STORAGE="${MILESIGHT_STORAGE:-duckdb}"
+case "$STORAGE" in duckdb|firebase) ;; *) echo "MILESIGHT_STORAGE must be duckdb or firebase." >&2; exit 1 ;; esac
+
 DIR="${MILESIGHT_DIR:-$HOME/milesight-dashboard}"
 SOURCE_DIR="${MILESIGHT_SOURCE_DIR:-}"
 if [ -n "$SOURCE_DIR" ]; then SOURCE_DIR="$(cd "$SOURCE_DIR" && pwd)"; fi
@@ -52,9 +72,15 @@ if [ ! -f data/.env ]; then
   printf 'FIREBASE_SETUP_TOKEN=%s\n' "$TOKEN" > data/.env
 fi
 TOKEN="$(sed -n 's/^FIREBASE_SETUP_TOKEN=//p' data/.env | head -n1)"
+# Only a fresh install gets a storage choice; an existing one keeps its own.
+if [ ! -f data/storage.local.json ] && [ ! -f data/firebase.local.json ]; then
+  printf '{"mode":"%s"}\n' "$STORAGE" > data/storage.local.json
+fi
+MODE="$(sed -n 's/.*"mode" *: *"\([a-z]*\)".*/\1/p' data/storage.local.json 2>/dev/null | head -n1)"
+MODE="${MODE:-firebase}"
 if [ "$(id -u)" = "0" ]; then
   chown "$RUNTIME_UID:$RUNTIME_GID" data
-  for file in data/.env data/firebase.local.json data/serviceAccountKey.json; do
+  for file in data/.env data/storage.local.json data/firebase.local.json data/serviceAccountKey.json; do
     if [ -f "$file" ]; then chown "$RUNTIME_UID:$RUNTIME_GID" "$file"; fi
   done
 fi
@@ -70,8 +96,26 @@ fi
 
 IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
 IP="${IP:-localhost}"
+banner
+if [ "$MODE" = "duckdb" ]; then
 cat <<EOF
+DP Sensor Hub is running. Your data stays on this server.
 
+  Dashboard:     http://$IP:8080
+  Setup token:   $TOKEN
+  MQTT broker:   $IP:1883
+
+Three steps:
+  1. Open http://$IP:8080 and create your account (paste the setup token above).
+  2. Create a workspace. Settings shows its MQTT username, password and topic.
+  3. Enter those in your Milesight gateway's MQTT settings. Sensors appear on their own.
+
+Prefer Firebase cloud storage? Open http://$IP:8080/setup.
+Update later by re-running the install command.
+EOF
+exit 0
+fi
+cat <<EOF
 DP Sensor Hub is running.
 
   Dashboard / setup:  http://$IP:8080/setup
