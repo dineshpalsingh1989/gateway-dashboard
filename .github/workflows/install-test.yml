@@ -17,6 +17,7 @@ jobs:
         env:
           MILESIGHT_DIR: ${{ runner.temp }}/milesight
           MILESIGHT_SOURCE_DIR: ${{ github.workspace }}
+          MILESIGHT_STORAGE: firebase
       - name: Check dashboard responds
         run: |
           for i in $(seq 1 30); do
@@ -56,6 +57,44 @@ jobs:
         run: |
           docker stop --time 15 milesight-dashboard
           test "$(docker inspect --format '{{.State.ExitCode}}' milesight-dashboard)" = "0"
+      - name: Container logs
+        if: failure()
+        run: docker logs milesight-dashboard
+      - name: Cleanup
+        if: always()
+        run: docker rm -f milesight-dashboard || true
+
+  # The default install: local DuckDB storage, ready without any cloud setup.
+  install-local:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run installer with defaults
+        run: sh install.sh | tee install.log
+        env:
+          MILESIGHT_DIR: ${{ runner.temp }}/milesight
+          MILESIGHT_SOURCE_DIR: ${{ github.workspace }}
+      - name: Check banner and local mode
+        run: |
+          grep -q 'by Dineshpal Singh' install.log
+          grep -q 'Your data stays on this server' install.log
+          for i in $(seq 1 30); do
+            mode=$(curl -s http://localhost:8080/health | sed -n 's/.*"storageMode":"\([a-z]*\)".*/\1/p')
+            echo "attempt $i: storageMode=$mode"
+            if [ "$mode" = "duckdb" ]; then break; fi
+            sleep 2
+          done
+          test "$mode" = "duckdb"
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/)" = "200"
+          test "$(docker exec milesight-dashboard id -u)" != "0"
+          docker exec milesight-dashboard node --input-type=module -e "
+            import net from 'node:net';
+            const socket = net.connect(1883, '127.0.0.1');
+            socket.setTimeout(3000);
+            socket.on('connect', () => process.exit(0));
+            socket.on('error', () => process.exit(1));
+            socket.on('timeout', () => process.exit(1));"
       - name: Container logs
         if: failure()
         run: docker logs milesight-dashboard

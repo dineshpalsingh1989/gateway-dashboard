@@ -1,4 +1,6 @@
-# DP Sensor Hub v2.2.0
+# DP Sensor Hub: Milesight IoT dashboard, MQTT broker and Telegram alerts
+
+**v2.2.0 · by [Dineshpal Singh](https://github.com/dineshpalsingh1989)**
 
 <p align="center"><img src="docs/banner.svg" alt="DP Sensor Hub" width="100%"></p>
 
@@ -8,7 +10,33 @@
 
 [Live demo](https://dineshpalsingh1989.github.io/gateway-dashboard/) · [Releases](https://github.com/dineshpalsingh1989/gateway-dashboard/releases) · [Report a bug](https://github.com/dineshpalsingh1989/gateway-dashboard/issues/new/choose) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md)
 
-A self-hosted MQTT broker and live dashboard for **Milesight gateways and sensors**. Point your gateway at it, and every sensor appears on its own: live values, charts, power and energy, alerts in Telegram, and remote commands. Store data on your own server (DuckDB) or in the cloud (Firebase).
+A self-hosted MQTT broker and live dashboard for **Milesight LoRaWAN gateways and sensors** (UG65, UG56 and other gateways with an embedded network server). Point your gateway at it, and every sensor appears on its own: live values, charts, power and energy monitoring with kWh and cost, temperature and leak alerts in Telegram, and remote commands. Store data on your own server (DuckDB) or in the cloud (Firebase).
+
+## Install in one command
+
+On any 64-bit Linux server or Raspberry Pi with internet access:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/dineshpalsingh1989/gateway-dashboard/main/install.sh | sh
+```
+
+```text
+ ____   ____     ____                                    _   _         _
+|  _ \ |  _ \   / ___|   ___  _ __   ___   ___   _ __   | | | | _   _ | |__
+| | | || |_) |  \___ \  / _ \| '_ \ / __| / _ \ | '__|  | |_| || | | || '_ \
+| |_| ||  __/    ___) ||  __/| | | |\__ \| (_) || |     |  _  || |_| || |_) |
+|____/ |_|      |____/  \___||_| |_||___/ \___/ |_|     |_| |_| \__,_||_.__/
+
+  ////////////////////  by Dineshpal Singh  ////////////////////
+```
+
+Then three steps, about five minutes:
+
+1. Open `http://<your-server>:8080` and create your account with the setup token the installer printed.
+2. Create a workspace. **Settings** shows its MQTT username, password and topic.
+3. Enter those in your Milesight gateway's MQTT settings. Sensors appear on their own.
+
+No cloud account is needed: data stays on your server. Docker is installed for you if missing. [More install options](#install-on-linux).
 
 **DP Sensor Hub is an independent project, not affiliated with or endorsed by Milesight. Milesight is a trademark of its respective owner.**
 
@@ -177,7 +205,15 @@ sensor ingestion and commands require the self-hosted backend described below.
 curl -fsSL https://raw.githubusercontent.com/dineshpalsingh1989/gateway-dashboard/main/install.sh | sh
 ```
 
-The installer installs Docker if needed, starts the dashboard, and prints the setup URL and administrator token. Files are installed under `~/milesight-dashboard`.
+The installer installs Docker if needed, starts the dashboard, and prints the dashboard address and administrator token. Files are installed under `~/milesight-dashboard`.
+
+New installs use **local DuckDB storage**, so the dashboard is ready straight away. To start with the Firebase setup page instead:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/dineshpalsingh1989/gateway-dashboard/main/install.sh | MILESIGHT_STORAGE=firebase sh
+```
+
+Re-running the command updates an existing installation and keeps its storage choice. You can switch later at `/setup`.
 
 ## Choose local or cloud storage
 
@@ -329,3 +365,9 @@ docker compose down              # Stop the dashboard
 To update, re-run the installation command. Back up `data/` and the installation directory's `.env` securely before updating. Sensor readings live in Firestore and require a separate Firestore backup or export.
 
 The dashboard's About panel and `/health` report the running version and service status after setup is complete.
+
+## About the author
+
+DP Sensor Hub is built and maintained by **Dineshpal Singh** ([@dineshpalsingh1989](https://github.com/dineshpalsingh1989)).
+
+Need help installing it, a sensor added, or a custom dashboard for your site? [Open an issue](https://github.com/dineshpalsingh1989/gateway-dashboard/issues/new/choose). If this project helps you, a ⭐ on GitHub helps others find it.

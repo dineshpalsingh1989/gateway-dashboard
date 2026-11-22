@@ -898,7 +898,16 @@ async function pruneOldest(uid, devId, count) {
   return deleted
 }
 
+const BANNER = String.raw`
+ ____   ____     ____                                    _   _         _
+|  _ \ |  _ \   / ___|   ___  _ __   ___   ___   _ __   | | | | _   _ | |__
+| | | || |_) |  \___ \  / _ \| '_ \ / __| / _ \ | '__|  | |_| || | | || '_ \
+| |_| ||  __/    ___) ||  __/| | | |\__ \| (_) || |     |  _  || |_| || |_) |
+|____/ |_|      |____/  \___||_| |_||___/ \___/ |_|     |_| |_| \__,_||_.__/`
+
 const mqttServer = createServer(aedes.handle).listen(CFG.mqttPort, () => {
+  console.log(BANNER)
+  console.log('  ////////////////////  by Dineshpal Singh  ////////////////////')
   console.log('')
   console.log('  DP Sensor Hub v' + VERSION + '  (build ' + BUILD + ')')
   console.log('  MQTT broker   mqtt://0.0.0.0:' + CFG.mqttPort)
@@ -1902,7 +1911,9 @@ const PAGE = String.raw`<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>DP Sensor Hub</title>
+<title>DP Sensor Hub - Milesight IoT dashboard</title>
+<meta name="description" content="DP Sensor Hub by Dineshpal Singh: self-hosted live dashboard and MQTT broker for Milesight LoRaWAN gateways and 24 sensors, with charts, energy and cost, and Telegram alerts.">
+<meta name="author" content="Dineshpal Singh">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600;700&family=Fira+Sans:wght@400;500;600;700&display=swap">

@@ -2,6 +2,7 @@
 
 ## v2.2.0 - 2026-11-22
 
+- **Easier install.** The one-command installer now starts new installations in local DuckDB storage, so the dashboard is ready with no cloud account (`MILESIGHT_STORAGE=firebase` keeps the Firebase setup flow). The installer and server log show a DP Sensor Hub banner, and its closing message lists three steps.
 - **Telegram alerts.** Leaks, batteries under 20%, devices that stop reporting, and readings outside limits you set send a Telegram message to everyone signed in to the bot, and another when the condition clears. A condition that flaps back within 30 minutes stays quiet. Turn alerts off in Settings → Alerts & energy.
 - **Alert limits.** Set "below" and "above" limits per reading under its history chart. The chart draws the limits, circles every reading outside them, and shows the share of time outside; the dashboard's Needs attention panel lists broken limits.
 - **Complete long ranges.** The broker now writes an hourly roll-up (count, average, low, high and watt-hours) alongside each reading. 7- and 30-day charts read these, so they cover the whole period instead of the newest 500 readings, and show each hour's low-to-high band. Charts fall back to raw readings for periods before the upgrade.
