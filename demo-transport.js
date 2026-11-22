@@ -14,7 +14,7 @@
     var url = new URL(typeof input === 'string' ? input : input.url, location.href)
     if (url.origin !== location.origin) return originalFetch(input, options)
     if (url.pathname === '/health') return json({
-      ok:true,demo:true,version:'2.1.1 Demo',build:'2026-10-18',
+      ok:true,demo:true,version:'2.2.0 Demo',build:'2026-11-22',
       uptime:Math.floor((Date.now()-started)/1000),host:'demo.local',project:'local-demo',
       mqtt:{listening:true,port:1883,clients:1},firestore:'ok',webKey:'ok',checkedAt:Date.now(),
     })

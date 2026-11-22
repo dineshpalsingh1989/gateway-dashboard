@@ -1,6 +1,6 @@
 {
   "name": "dp-sensor-hub",
-  "version": "2.1.1",
+  "version": "2.2.0",
   "description": "MQTT dashboard with Firebase or local DuckDB storage and Telegram command menus",
   "type": "module",
   "main": "milesight.js",

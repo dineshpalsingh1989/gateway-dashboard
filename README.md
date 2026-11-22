@@ -1,4 +1,4 @@
-# DP Sensor Hub v2.1.1
+# DP Sensor Hub v2.2.0
 
 <p align="center"><img src="docs/banner.svg" alt="DP Sensor Hub" width="100%"></p>
 
@@ -13,6 +13,8 @@ A self-hosted MQTT broker and live dashboard for **Milesight gateways and sensor
 **DP Sensor Hub is an independent project, not affiliated with or endorsed by Milesight. Milesight is a trademark of its respective owner.**
 
 The GitHub repository is `gateway-dashboard`; installation and demo links below use that address. Existing installation paths, database names, and environment variables remain supported.
+
+**New in v2.2.0:** Telegram alerts with per-reading limits; complete 7- and 30-day charts with compare, zoom, daily energy and cost, and a weekly pattern heatmap; dashboard search, rooms and a wall display; a redesigned dark operations console (with a light theme toggle) and live status cues; and a dashboard overview with live power load, current draw, per-circuit bars and three-phase imbalance, plus a needs-attention list for leaks, low batteries and silent devices. History charts add an average line and, for power, energy in kWh. See [v2.2.0 release notes](docs/releases/v2.2.0.md).
 
 **v2.1.1 supports local and cloud operation:** choose **DuckDB on your own server** or **Firebase Firestore in the cloud**. Choose **Telegram command buttons without AI** or **Gemini AI** independently of storage. Settings shows server disk, database size, and memory usage.
 
