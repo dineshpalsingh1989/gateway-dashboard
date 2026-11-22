@@ -1,5 +1,22 @@
 # Changelog
 
+## v2.2.0 - 2026-11-22
+
+- **Telegram alerts.** Leaks, batteries under 20%, devices that stop reporting, and readings outside limits you set send a Telegram message to everyone signed in to the bot, and another when the condition clears. A condition that flaps back within 30 minutes stays quiet. Turn alerts off in Settings → Alerts & energy.
+- **Alert limits.** Set "below" and "above" limits per reading under its history chart. The chart draws the limits, circles every reading outside them, and shows the share of time outside; the dashboard's Needs attention panel lists broken limits.
+- **Complete long ranges.** The broker now writes an hourly roll-up (count, average, low, high and watt-hours) alongside each reading. 7- and 30-day charts read these, so they cover the whole period instead of the newest 500 readings, and show each hour's low-to-high band. Charts fall back to raw readings for periods before the upgrade.
+- **Chart tools.** Compare up to four lines (other readings of the device, or the same reading on other devices) in at most two units with left and right axes; 1-hour, 6-hour and custom date ranges; drag to zoom; CSV export of every line.
+- **Daily and Pattern views.** Daily shows energy per day in kWh for power (with cost when a tariff is set in Settings) and daily average with low-to-high for other readings. Pattern is a weekday-by-hour heatmap.
+- **Dashboard tools.** Search by name, model, EUI or room; filter by Reporting, Quiet, Silent or Alerts; cards group by room. Set each device's room and report interval in Settings → Devices; a device is quiet after 1.5 intervals and silent after 3.
+- **Wall display.** Full screen, larger type, no controls, and scrolls through the dashboard every 15 seconds. Start it from the dashboard or open the dashboard URL with #wall.
+- Redesigned the dashboard as a dark operations console: slate background, status-green accent, frosted panels, Fira Sans for text and Fira Code for numbers, and SVG icons. A header toggle switches to a light theme and is remembered per browser.
+- Live cues: a header badge shows **Live** with a ticking "updated Xs ago", or **Stale** after 15 minutes without an uplink. Each device card shows a status stripe and dot (reporting, quiet after 15 minutes, silent after 2 hours), and a reading briefly highlights when a new uplink changes it. All motion stops under reduced-motion settings.
+- Added a dashboard overview. **Power & load** totals live power (W/kW) and current draw (A), ranks every plug and current-sensor circuit in bar charts, and shows the worst three-phase imbalance. Select a bar to open its history.
+- Added **Needs attention**: leaks, batteries under 20%, broken limits, and silent devices.
+- History charts show a dashed average line. Power charts add energy in kWh, integrated from the plotted readings; gaps longer than 1 hour are not counted.
+- Tests for energy integration, daily and pattern buckets, hourly roll-ups, alert de-duplication, the overview, and local-mode roll-ups and access rules.
+- **Firebase mode: deploy the updated `firestore.rules`** for limits, report intervals, rooms, the energy setting and hourly roll-ups.
+
 ## v2.1.1 ? 2026-10-18
 
 - Added administrator-selected Firebase cloud or DuckDB local storage. Local mode includes persistent accounts, settings, telemetry, history, and server-checked workspace access.

@@ -81,9 +81,9 @@ export function createLocalAuth(db, setupToken) {
         for (const f of (b.filters || []).slice(0,5)) {
           if(f.where) q=q.where(...f.where)
           if(f.orderBy) q=q.orderBy(...f.orderBy)
-          if(f.limit) q=q.limit(Math.min(500,Math.max(1,f.limit)))
+          if(f.limit) q=q.limit(Math.min(1000,Math.max(1,f.limit)))
         }
-        const s = await q.limit(500).get(); json(res,200,{docs:s.docs.map(d=>({id:d.id,data:d.data()}))}); return true
+        const s = await q.limit(1000).get(); json(res,200,{docs:s.docs.map(d=>({id:d.id,data:d.data()}))}); return true
       }
       if (action === 'write' || action === 'transaction') {
         const writes = action === 'write' ? [b] : b.writes
@@ -115,7 +115,7 @@ export function createLocalAuth(db, setupToken) {
 export async function authorize(db,user,path,op,data,list=false,writes=[]) {
   if (typeof path !== 'string' || path.length > 512 || path.split('/').some(p=>!p || ['__proto__','constructor','prototype'].includes(p))) throw denied()
   const p=path.split('/'), own=p[1]===user.uid, read=op==='read'
-  if (list && !(p[0]==='workspaces' && own && p.length===3 && ['devices','telemetry','commands','joinRequests'].includes(p[2])) && !(p[0]==='workspaces' && own && p.length===5 && p[2]==='telemetry' && p[4]==='readings')) throw denied()
+  if (list && !(p[0]==='workspaces' && own && p.length===3 && ['devices','telemetry','commands','joinRequests'].includes(p[2])) && !(p[0]==='workspaces' && own && p.length===5 && p[2]==='telemetry' && ['readings','hourly'].includes(p[4]))) throw denied()
   const profile=(await db.doc('users/'+user.uid).get()).data()
   const ws=profile?.workspaceLabel || writes.find(w=>w.path==='users/'+user.uid)?.data?.workspaceLabel
   let ok=false
@@ -124,9 +124,9 @@ export async function authorize(db,user,path,op,data,list=false,writes=[]) {
   if(p[0]==='brokerUsers' && p.length===2) ok=op==='write' && data?.uid===user.uid && data?.topicPrefix===ws && typeof data.password==='string' && data.password.length>=22
   if(p[0]==='accountsByEmail' && p[1]===user.email && p.length===2) ok=op==='write' && data?.uid===user.uid && data?.workspaceLabel===ws
   if(p[0]==='workspaces' && own) {
-    if(['devices','telemetry','commands','joinRequests'].includes(p[2])) ok=read && (p.length===3 || p.length===4 || (p[2]==='telemetry' && p[4]==='readings' && p.length<=6))
-    if(p[2]==='devices' && p.length===4 && op==='write') ok=Object.keys(data||{}).every(k=>['name','nameSource','type','modelSource','matchedOn'].includes(k))
-    if(p[2]==='settings' && p.length===4) ok=read || ['mqttCredentials','telegram','telegramUsers','members'].includes(p[3])
+    if(['devices','telemetry','commands','joinRequests'].includes(p[2])) ok=read && (p.length===3 || p.length===4 || (p[2]==='telemetry' && ['readings','hourly'].includes(p[4]) && p.length<=6))
+    if(p[2]==='devices' && p.length===4 && op==='write') ok=Object.keys(data||{}).every(k=>['name','nameSource','type','modelSource','matchedOn','limits','interval','room'].includes(k))
+    if(p[2]==='settings' && p.length===4) ok=read || ['mqttCredentials','telegram','telegramUsers','members','energy'].includes(p[3])
     if(p[2]==='secrets' && p.length===4) ok=!read && p[3]==='telegram'
     if(p[2]==='joinRequests' && p.length===4 && op==='delete') ok=true
   }

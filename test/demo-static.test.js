@@ -18,7 +18,7 @@ test('static demo health, tests, commands and events need no backend requests',a
     __demoSaveCommand:async row=>records.push(row)}
   const context=vm.createContext({window,location:{href:'https://example.github.io/milesight-dashboard/',origin:'https://example.github.io'},URL,Response,btoa,
     setInterval:fn=>{timers.push(fn);return 1},clearInterval:()=>{},setTimeout:fn=>{timers.push(fn);return 2},clearTimeout:()=>{}})
-  vm.runInContext(page.match(/<script>([\s\S]*?)<\/script>/)[1],context)
+  vm.runInContext(page.slice(page.indexOf('<body>')).match(/<script>([\s\S]*?)<\/script>/)[1],context)
   assert.equal((await(await window.fetch('/health')).json()).demo,true)
   assert.match((await(await window.fetch('/selftest')).json()).detail,/simulated/)
   const options={method:'POST',body:JSON.stringify({deviceId:'controller',hex:'0701ff',fport:85,confirmed:true})}

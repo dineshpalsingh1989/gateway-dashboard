@@ -39,11 +39,12 @@ service cloud.firestore {
     match /workspaces/{uid}/devices/{device} {
       allow read: if owner(uid);
       allow update: if owner(uid) && request.resource.data.diff(resource.data).affectedKeys()
-        .hasOnly(['name', 'nameSource', 'type', 'modelSource', 'matchedOn']);
+        .hasOnly(['name', 'nameSource', 'type', 'modelSource', 'matchedOn', 'limits', 'interval', 'room']);
     }
     match /workspaces/{uid}/telemetry/{device} {
       allow read: if owner(uid);
       match /readings/{reading} { allow read: if owner(uid); }
+      match /hourly/{hour} { allow read: if owner(uid); }
     }
     match /workspaces/{uid}/commands/{command} {
       allow read: if owner(uid);
@@ -52,7 +53,7 @@ service cloud.firestore {
     match /workspaces/{uid}/settings/{setting} {
       allow read: if owner(uid);
       allow write: if owner(uid) && setting in
-        ['mqttCredentials', 'telegram', 'telegramUsers', 'members'];
+        ['mqttCredentials', 'telegram', 'telegramUsers', 'members', 'energy'];
     }
     match /workspaces/{uid}/secrets/{secret} {
       allow write: if owner(uid) && secret == 'telegram';

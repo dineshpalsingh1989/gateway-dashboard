@@ -20,7 +20,7 @@ test('local server boots without Firebase, serves an offline SDK and persists MQ
     let up=false
     for(let i=0;i<100;i++){try{if((await fetch(base+'/health')).ok){up=true;break}}catch{}await new Promise(r=>setTimeout(r,100));if(child.exitCode!==null)break}
     assert.ok(up,logs)
-    const hr=await fetch(base+'/health');assert.ok(hr.headers.get('content-type')?.includes('application/json'),logs);const health=await hr.json();assert.equal(health.storageMode,'duckdb');assert.equal(health.version,'2.1.1')
+    const hr=await fetch(base+'/health');assert.ok(hr.headers.get('content-type')?.includes('application/json'),logs);const health=await hr.json();assert.equal(health.storageMode,'duckdb');assert.equal(health.version,'2.2.0')
     const page=await(await fetch(base)).text();assert.doesNotMatch(page,/from 'https:\/\/www.gstatic.com\/firebasejs/);assert.match(page,/var LOCAL_MODE = true/)
     for(const script of page.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/g))new vm.Script(script[1])
     assert.equal((await fetch(base+'/system-status')).status,401)
@@ -43,6 +43,11 @@ test('local server boots without Firebase, serves an offline SDK and persists MQ
       let readings=[]
       for(let i=0;i<40;i++){readings=(await call('list',{path:'workspaces/'+uid+'/telemetry/dev-24e1241280000001/readings'})).docs;if(readings.length)break;await new Promise(r=>setTimeout(r,100))}
       assert.equal(readings.length,1,logs);assert.equal(readings[0].data.values.temperature,23.5)
+      const hourly=(await call('list',{path:'workspaces/'+uid+'/telemetry/dev-24e1241280000001/hourly',filters:[{where:['ts','>=',0]},{where:['ts','<',Date.now()+1]}]})).docs
+      assert.equal(hourly.length,1);assert.equal(hourly[0].data.sum.temperature,23.5);assert.equal(hourly[0].data.n.humidity,1)
+      await call('write',{path:'workspaces/'+uid+'/devices/dev-24e1241280000001',data:{limits:{temperature:{min:null,max:20}},room:'Lab',interval:15},merge:true})
+      await call('write',{path:'workspaces/'+uid+'/settings/energy',data:{tariff:0.2,currency:'RM'},merge:true})
+      assert.equal((await call('read',{path:'workspaces/'+uid+'/devices/dev-24e1241280000001'})).data.limits.temperature.max,20)
       const status=await(await fetch(base+'/system-status',{headers:{authorization:'Bearer '+token}})).json();assert.equal(status.storageMode,'duckdb');assert.ok(status.databaseBytes>0)
     }finally{socket.destroy()}
   }finally{

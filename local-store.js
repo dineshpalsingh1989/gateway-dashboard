@@ -62,7 +62,7 @@ export async function openLocalStore(filename) {
         const rows = (await connection.runAndReadAll('SELECT path, body FROM documents WHERE starts_with(path, $1)', [prefix])).getRows()
         let docs = rows.filter(([p]) => !p.slice(prefix.length).includes('/')).map(([p,b]) => snap(p, JSON.parse(b)))
         for (const f of filters) {
-          if (f.where) { const [k,op,v] = f.where; docs = docs.filter(d => op === '>=' ? d.data()[k] >= v : op === '==' ? d.data()[k] === v : false) }
+          if (f.where) { const [k,op,v] = f.where; docs = docs.filter(d => op === '>=' ? d.data()[k] >= v : op === '<' ? d.data()[k] < v : op === '==' ? d.data()[k] === v : false) }
           if (f.orderBy) { const [k,dir] = f.orderBy; docs.sort((a,b) => (a.data()[k] < b.data()[k] ? -1 : a.data()[k] > b.data()[k] ? 1 : 0) * (dir === 'desc' ? -1 : 1)) }
           if (f.limit) docs = docs.slice(0, f.limit)
         }

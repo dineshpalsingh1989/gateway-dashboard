@@ -12,5 +12,5 @@
 <rect x="36" y="264" width="928" height="88" rx="12" fill="#e2f0eb"/>
 <text x="56" y="292" font-size="15" font-weight="700" fill="#166454">Two access checks, one workspace</text>
 <text x="56" y="316" font-size="13" fill="#355b53">Gateway: MQTT credentials + workspace topic. Browser: Firebase sign-in + Firestore rules.</text>
-<text x="56" y="337" font-size="13" fill="#355b53">Use View history for the latest 500 stored readings in a period, then download CSV.</text>
+<text x="56" y="337" font-size="13" fill="#355b53">Each reading also updates an hourly roll-up, so 7- and 30-day charts are complete. Download CSV anytime.</text>
 </svg>

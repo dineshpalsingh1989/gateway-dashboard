@@ -53,12 +53,13 @@ const FieldValue = STORAGE_MODE === 'duckdb' ? localFields : FirebaseFieldValue
 // /health, and in the startup log, so "which build is actually running?" is
 // never a guess again. BUILD is the date the version was cut.
 
-const VERSION = '2.1.1'
-const BUILD = '2026-10-18'
+const VERSION = '2.2.0'
+const BUILD = '2026-11-22'
 
 // What changed, newest first. Kept here so the running server can tell you
 // its own history - no changelog file to lose track of.
 const CHANGES = [
+  ['2.2.0', 'Telegram alerts for leaks, low batteries, silent devices and per-reading limits set from the chart. Charts: hourly roll-ups make 7- and 30-day ranges complete, compare up to four lines in two units, 1-hour/6-hour/custom ranges, drag to zoom, daily energy bars with cost from a tariff in Settings, and a weekday-by-hour pattern heatmap. Dashboard search, status filters, rooms, per-device report intervals and a wall display mode. Redesigned as a dark operations console (light theme on the header toggle, remembered per browser) with Fira Sans and Fira Code, SVG icons, a ticking Live/Stale badge, per-device reporting status, and a highlight when a reading changes. Dashboard overview: live power load and current draw with per-circuit bars, three-phase imbalance, and a needs-attention list for leaks, low batteries and devices silent for over 2 hours. History charts show an average line, and power charts show energy in kWh for the plotted readings.'],
   ['2.1.1', 'Firebase cloud or local DuckDB storage with local sign-in, Telegram command buttons without AI or optional Gemini, and authenticated system disk and memory status. Restart to switch storage; data is not migrated.'],
   ['2.0.0 public browser demo', 'Added a GitHub Pages demo with all 24 sample devices, charts, CSV export, and simulated commands. The static demo requires no server, Firebase credentials, or gateway.'],
   ['2.0.0 sensors and MQTT commands', 'Added a 24-device local demo, 17 gateway-decoded sensor profiles, workspace-protected MQTT downlinks with UC300 presets, message previews, and command history. Published status does not confirm sensor delivery. Deploy updated Firestore rules and configure the gateway downlink topic for live use.'],
@@ -697,13 +698,19 @@ async function handleUplink(uid, payload) {
     return
   }
 
-  // Telemetry: latest values plus a rolling window of recent readings.
+  // Telemetry: latest values plus a rolling window of recent readings, and
+  // this hour's roll-up (what 7- and 30-day charts read).
   const telRef = db.doc('workspaces/' + uid + '/telemetry/' + devId)
+  const now = Date.now(), hour = now - now % 3600000
+  const hourRef = db.doc('workspaces/' + uid + '/telemetry/' + devId + '/hourly/' + hour)
+  let merged = values
   await db.runTransaction(async (tx) => {
     const s = await tx.get(telRef)
+    const hs = await tx.get(hourRef)
     const cur = s.exists ? s.data() : { values: {}, history: [] }
     const history = Array.isArray(cur.history) ? cur.history.slice() : []
-    history.push({ ts: Date.now(), values })
+    const prev = history[history.length - 1]
+    history.push({ ts: now, values })
     while (history.length > 20) history.shift()
 
     // The values map is merged so a device that reports different subsets per
@@ -711,7 +718,7 @@ async function handleUplink(uid, payload) {
     // wrote in here stays forever - gatewayTime was landing as a reading before
     // the envelope list covered it. Sweep those out on every write, so the map
     // heals itself instead of needing the device deleted and re-registered.
-    const merged = { ...cur.values, ...values }
+    merged = { ...cur.values, ...values }
     for (const k of Object.keys(merged)) if (ENVELOPE.has(k)) delete merged[k]
 
     tx.set(telRef, {
@@ -719,7 +726,12 @@ async function handleUplink(uid, payload) {
       history,
       updatedAt: FieldValue.serverTimestamp(),
     })
+    tx.set(hourRef, rollupHour(hs.exists ? hs.data() : null, hour, values, prev, now))
   })
+
+  const name = live.name || (devSnap.exists ? devSnap.data().name : '') || eui
+  checkAlerts(uid, devId, alertConditions(name, merged, devSnap.exists ? devSnap.data().limits : null), null)
+    .catch(e => console.error('[alerts] ' + e.message))
 
   // REAL HISTORY. The rolling 20 above is only what the sparkline needs and is
   // cheap to read in one go; this is the permanent record - one document per
@@ -760,6 +772,106 @@ async function handleUplink(uid, payload) {
   emit(uid, 'stored', { eui, path: 'workspaces/' + uid + '/telemetry/' + devId + '/readings',
                         fields: Object.keys(values).join(', ') })
 }
+
+// ===== Hourly roll-ups and alerts =====
+//
+// One document per device per hour: count, sum, low and high of every numeric
+// reading, plus watt-hours integrated from consecutive power readings.
+// shortcut: roll-ups are never pruned (24 small documents per device per day);
+// prune them alongside readings if storage ever matters.
+function rollupHour(cur, hour, values, prev, now) {
+  const r = cur ? { ...cur, n: { ...cur.n }, sum: { ...cur.sum }, min: { ...cur.min }, max: { ...cur.max } }
+                : { ts: hour, n: {}, sum: {}, min: {}, max: {}, wh: 0 }
+  for (const [k, v] of Object.entries(values)) {
+    if (ENVELOPE.has(k) || typeof v !== 'number' || !Number.isFinite(v)) continue
+    r.n[k] = (r.n[k] || 0) + 1
+    r.sum[k] = (r.sum[k] || 0) + v
+    r.min[k] = k in r.min ? Math.min(r.min[k], v) : v
+    r.max[k] = k in r.max ? Math.max(r.max[k], v) : v
+  }
+  const p0 = prev && prev.values ? prev.values.power : undefined, dt = prev ? now - prev.ts : 0
+  // Gaps over an hour count as no data rather than a guess.
+  if (typeof values.power === 'number' && typeof p0 === 'number' && dt > 0 && dt <= 3600000) {
+    r.wh = (r.wh || 0) + (p0 + values.power) / 2 * dt / 3600000
+  }
+  return r
+}
+
+// What is wrong with a device right now, from its latest values and limits.
+function alertConditions(name, values, limits) {
+  const out = [], v = values || {}
+  if (v.leak === 1 || v.leak === true || v.leak === 'leak') {
+    out.push({ id: 'leak', text: name + ': leak detected', clear: name + ': leak cleared' })
+  }
+  if (typeof v.battery === 'number' && v.battery < 20) {
+    out.push({ id: 'battery', text: name + ': battery at ' + Math.round(v.battery) + '%', clear: name + ': battery OK' })
+  }
+  for (const [k, l] of Object.entries(limits || {})) {
+    const x = v[k]
+    if (typeof x !== 'number' || !l) continue
+    const clear = name + ': ' + k + ' back within limits (' + x + ')'
+    if (typeof l.min === 'number' && x < l.min) out.push({ id: 'limit:' + k, text: name + ': ' + k + ' ' + x + ' is below ' + l.min, clear })
+    else if (typeof l.max === 'number' && x > l.max) out.push({ id: 'limit:' + k, text: name + ': ' + k + ' ' + x + ' is above ' + l.max, clear })
+  }
+  return out
+}
+
+// A condition alerts when it starts and again when it clears. One that flaps
+// back within the cool-down stays quiet rather than spamming the chat.
+// shortcut: alert state lives in memory, so a restart can repeat a still-active
+// alert once; persist it if that becomes noise.
+const alertState = new Map()                 // uid|device|condition -> state
+const ALERT_COOLDOWN_MS = 30 * 60000
+
+// ids: the conditions this check speaks for (null = all of them).
+async function checkAlerts(uid, devId, active, ids) {
+  const prefix = uid + '|' + devId + '|', now = Date.now(), lines = []
+  for (const a of active) {
+    const k = prefix + a.id, st = alertState.get(k)
+    if (st && st.on) { st.clear = a.clear; continue }
+    const told = !st || now - st.at > ALERT_COOLDOWN_MS
+    if (told) lines.push('⚠️ ' + a.text)
+    alertState.set(k, { on: true, at: told ? now : st.at, told, clear: a.clear })
+  }
+  for (const [k, st] of alertState) {
+    if (!k.startsWith(prefix) || !st.on) continue
+    const id = k.slice(prefix.length)
+    if ((ids && !ids.includes(id)) || active.some(a => a.id === id)) continue
+    st.on = false
+    if (st.told) lines.push('✅ ' + st.clear)
+  }
+  if (lines.length) await notifyAlert(uid, lines.join('\n'))
+  return lines
+}
+
+// Alerts go to everyone signed in to the workspace's bot who is still a member.
+async function notifyAlert(uid, text) {
+  const bot = bots.get(uid)
+  if (!bot || !bot.token) return
+  const cfg = await db.doc('workspaces/' + uid + '/settings/telegram').get()
+  if (cfg.exists && cfg.data().alerts === false) return
+  for (const [tgId, p] of Object.entries(await linkedPeople(uid))) {
+    if ((await membership(uid, p.uid, p.email)).ok) await say(bot.token, tgId, text)
+  }
+  emit(uid, 'info', { msg: 'telegram alert: ' + text.split('\n').join(' | ') })
+}
+
+// Silence has no uplink to trigger on, so it is swept on a timer.
+function silentAfter(dev) { return dev.interval > 0 ? dev.interval * 180000 : 7200000 }
+async function sweepSilent() {
+  for (const uid of bots.keys()) {
+    const snap = await db.collection('workspaces/' + uid + '/devices').get()
+    for (const d of snap.docs) {
+      const dev = d.data(), seen = dev.lastSeenAt && dev.lastSeenAt.toMillis ? dev.lastSeenAt.toMillis() : 0
+      if (!seen) continue
+      const name = dev.name || d.id, quiet = Date.now() - seen
+      await checkAlerts(uid, d.id, quiet > silentAfter(dev)
+        ? [{ id: 'silent', text: name + ': no uplink for ' + Math.round(quiet / 60000) + ' min', clear: name + ': reporting again' }]
+        : [], ['silent'])
+    }
+  }
+}
+const silentTimer = setInterval(() => sweepSilent().catch(e => console.error('[alerts] ' + e.message)), 5 * 60000)
 
 // Delete the oldest readings for a device, in batches. Firestore caps a write
 // batch at 500 operations, and we cap the whole job so one uplink can never
@@ -1762,6 +1874,7 @@ installShutdown(async () => {
   console.log('[shutdown] Closing dashboard, broker and Telegram polling')
   clearInterval(webKeyTimer)
   clearInterval(firestoreTimer)
+  clearInterval(silentTimer)
   stopWatchingBots()
   const stoppingBots = [...bots.values()].map(bot => bot.stop())
   abortRequests()
@@ -1790,12 +1903,17 @@ const PAGE = String.raw`<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>DP Sensor Hub</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600;700&family=Fira+Sans:wght@400;500;600;700&display=swap">
+<script>try{if(localStorage.getItem('theme')==='light')document.documentElement.dataset.theme='light'}catch(e){}</script>
 <style>
   /* Metric colours. Validated with the palette checker for every group that
      actually appears together on one device (EM300-TH, AM300, WS523, UC300),
      in BOTH themes - dark is its own set of steps, not a lightened flip.
-     As CSS vars so the theme switch needs no JavaScript. */
-  :root {
+     Dark operations console is the default; the header toggle sets
+     data-theme="light". Fonts fall back to system faces when offline. */
+  :root[data-theme="light"] {
     --m-temperature:#c96206; --m-humidity:#2a8fd4; --m-battery:#2f9150;
     --m-co2:#7c5cf0; --m-pressure:#b0478f; --m-power:#a8780a;
     --m-current:#16a595; --m-voltage:#a32d68; --m-ai_1:#1f7fc4;
@@ -1810,13 +1928,13 @@ const PAGE = String.raw`<!doctype html>
     --m-region:#c2570a; --m-region_count:#0d8a80; --m-people_count_region:#c2570a;
     --m-dwell_time_avg:#7145d6; --m-dwell_time_max:#7145d6;
 
-    --bg:#f3f5fb; --surface:#fff; --alt:#eef1f8; --border:#dbe1ee; --text:#10162a;
-    --dim:#5b6480; --accent:#0f8f86; --soft:rgba(15,143,134,.12); --ok:#1f9d55;
-    --oks:rgba(31,157,85,.14); --bad:#c23a24; --bads:rgba(194,58,36,.14);
-    --glass:rgba(255,255,255,.62); --gbr:rgba(255,255,255,.7);
-    --sh:0 1px 2px rgba(16,22,42,.04),0 8px 24px rgba(16,22,42,.06);
+    --bg:#f1f5f9; --surface:#fff; --alt:#eef2f7; --border:#dce3ee; --text:#0f172a;
+    --dim:#526079; --accent:#15803d; --on-accent:#fff; --soft:rgba(21,128,61,.1); --ok:#15803d;
+    --oks:rgba(21,128,61,.12); --bad:#dc2626; --bads:rgba(220,38,38,.1); --warn:#b45309;
+    --glass:rgba(255,255,255,.7); --gbr:rgba(255,255,255,.8); --glow:rgba(21,128,61,.1); --s1:#2563eb; --s2:#b45309; --s3:#c026d3;
+    --sh:0 1px 2px rgba(15,23,42,.04),0 8px 24px rgba(15,23,42,.06);
   }
-  @media (prefers-color-scheme:dark){:root{
+  :root{
     --m-temperature:#d1741f; --m-humidity:#3593d8; --m-battery:#27a05b;
     --m-co2:#8055e8; --m-pressure:#c44a90; --m-power:#b88a19;
     --m-current:#1aa897; --m-voltage:#b8447a; --m-ai_1:#3593d8;
@@ -1828,18 +1946,23 @@ const PAGE = String.raw`<!doctype html>
     --m-region:#d97a28; --m-region_count:#1aa897; --m-people_count_region:#d97a28;
     --m-dwell_time_avg:#9b7cf0; --m-dwell_time_max:#9b7cf0;
 
-    --bg:#0b1120; --surface:#121a2c; --alt:#182338; --border:#263252; --text:#e9edf8;
-    --dim:#8b98bb; --accent:#2dd4bf; --soft:rgba(45,212,191,.14); --ok:#34d399;
-    --oks:rgba(52,211,153,.14); --bad:#f87171; --bads:rgba(248,113,113,.14);
-    --glass:rgba(20,28,48,.6); --gbr:rgba(255,255,255,.09);
-    --sh:0 1px 2px rgba(0,0,0,.3),0 12px 28px rgba(0,0,0,.35);}}
+    /* Operations console palette (ui-ux-pro-max: dark tech + status green). */
+    --bg:#0f172a; --surface:#1b2336; --alt:#232c42; --border:#2e3a55; --text:#f8fafc;
+    --dim:#94a3b8; --accent:#22c55e; --on-accent:#0f172a; --soft:rgba(34,197,94,.13); --ok:#22c55e;
+    --oks:rgba(34,197,94,.14); --bad:#f87171; --bads:rgba(239,68,68,.15); --warn:#f59e0b;
+    --glass:rgba(27,35,54,.62); --gbr:rgba(148,163,184,.14); --glow:rgba(34,197,94,.12); --s1:#60a5fa; --s2:#fbbf24; --s3:#f472b6;
+    --sh:0 1px 2px rgba(0,0,0,.3),0 12px 28px rgba(0,0,0,.35);
+    --sans:'Fira Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+    --mono:'Fira Code',ui-monospace,Consolas,monospace;
+    color-scheme:dark}
+  :root[data-theme="light"]{color-scheme:light}
   *{box-sizing:border-box}
   body{margin:0;background:var(--bg);color:var(--text);padding:0 16px 48px;
-       font:15px/1.5 'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}
+       font:15px/1.5 var(--sans)}
   body::before{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;
-    background-image:radial-gradient(60% 40% at 8% -5%,var(--soft) 0,transparent 65%),
-                     radial-gradient(50% 36% at 96% 2%,rgba(99,91,234,.14) 0,transparent 68%)}
-  .wrap{max-width:1120px;margin:0 auto}
+    background-image:radial-gradient(60% 40% at 8% -5%,var(--glow) 0,transparent 65%),
+                     radial-gradient(50% 36% at 96% 2%,rgba(59,130,246,.12) 0,transparent 68%)}
+  .wrap{max-width:1240px;margin:0 auto}
   [hidden]{display:none!important}
 
   /* ---- auth ---- */
@@ -1858,7 +1981,7 @@ const PAGE = String.raw`<!doctype html>
   .hint.good{color:var(--ok);font-weight:600}
   button{font:inherit;cursor:pointer;border:none;border-radius:11px;padding:11px 18px;
          font-size:14.5px;font-weight:600;transition:filter .12s,transform .12s}
-  .primary{background:var(--accent);color:#06231f;width:100%;margin-top:20px}
+  .primary{background:var(--accent);color:var(--on-accent);width:100%;margin-top:20px}
   .primary:hover{filter:brightness(1.06);transform:translateY(-1px)}
   .primary:disabled{opacity:.55;cursor:not-allowed;transform:none}
   .ghost{background:var(--alt);color:var(--text);border:1px solid var(--border);width:auto}
@@ -1872,14 +1995,14 @@ const PAGE = String.raw`<!doctype html>
      are drawn by the pseudo-elements so the word sits in a real gap rather
      than on top of a border. */
   .orbar{display:flex;align-items:center;gap:12px;margin:20px 0 14px;color:var(--dim);
-         font:700 11px sans-serif;letter-spacing:.07em;text-transform:uppercase}
+         font:700 11px var(--sans);letter-spacing:.07em;text-transform:uppercase}
   .orbar::before,.orbar::after{content:"";flex:1;height:1px;background:var(--border)}
   .socials{display:grid;gap:9px}
   .social{background:var(--surface);color:var(--text);border:1px solid var(--border);
           width:100%;font-size:14px;font-weight:600;padding:11px 16px}
   .social:hover:not(:disabled){border-color:var(--accent);background:var(--alt)}
   .social:disabled{opacity:.5;cursor:not-allowed}
-  .who{font:13px ui-monospace,monospace;color:var(--dim);background:var(--alt);
+  .who{font:13px var(--mono);color:var(--dim);background:var(--alt);
        border:1px solid var(--border);border-radius:10px;padding:10px 12px;
        margin:14px 0 4px;word-break:break-all}
   /* "What is this?" - a disclosure rather than a separate page, so someone who
@@ -1894,7 +2017,7 @@ const PAGE = String.raw`<!doctype html>
             border-bottom:1px solid var(--border)}
   .mini div:last-child{border-bottom:none}
   .mini span{font-size:12px;color:var(--dim);flex:1}
-  .mini b{font:600 12.5px ui-monospace,monospace;text-align:right;word-break:break-all}
+  .mini b{font:600 12.5px var(--mono);text-align:right;word-break:break-all}
   /* Eleven entries would run the card off the screen. */
   .chg-scroll{max-height:220px;overflow-y:auto;padding-right:4px}
 
@@ -1909,28 +2032,28 @@ const PAGE = String.raw`<!doctype html>
   .mb-add .primary{width:auto;margin-top:0;white-space:nowrap}
   .mb{display:flex;align-items:center;gap:12px;padding:10px 13px;border-radius:11px;
       background:var(--alt);border:1px solid var(--border);margin-bottom:8px;font-size:13px}
-  .mb .em{flex:1;min-width:0;overflow-wrap:anywhere;font:13px ui-monospace,monospace}
-  .mb .tag2{font:700 10px sans-serif;letter-spacing:.06em;text-transform:uppercase;
+  .mb .em{flex:1;min-width:0;overflow-wrap:anywhere;font:13px var(--mono)}
+  .mb .tag2{font:700 10px var(--sans);letter-spacing:.06em;text-transform:uppercase;
             padding:3px 8px;border-radius:999px;white-space:nowrap}
   .mb .tag2.own{background:var(--soft);color:var(--accent)}
   .mb .tag2.wait{background:rgba(209,154,10,.15);color:#a8780a}
   .mb button{font-size:11.5px;font-weight:700;padding:5px 10px;border-radius:7px}
   .mb .no{background:var(--bads);color:var(--bad)}
   .mb .yes{background:var(--oks);color:var(--ok)}
-  @media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .mb .tag2.wait{color:#d9ab3a}}
+  :root:not([data-theme="light"]) .mb .tag2.wait{color:#d9ab3a}
 
   .tg-btns{display:flex;gap:9px;flex-wrap:wrap;align-items:center;margin-top:18px}
   .tg-btns .primary{width:auto;margin-top:0}
   .tg-btns .ghost{padding:11px 16px;font-size:14px}
   .tg-link{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:12px}
-  .tg-code{font:700 20px ui-monospace,monospace;letter-spacing:.14em;
+  .tg-code{font:700 20px var(--mono);letter-spacing:.14em;
            background:var(--soft);color:var(--accent);border-radius:10px;padding:9px 16px}
-  .tg-code small{display:block;font:400 11px sans-serif;letter-spacing:0;
+  .tg-code small{display:block;font:400 11px var(--sans);letter-spacing:0;
                  color:var(--dim);margin-top:4px}
   .chat{display:flex;align-items:center;gap:12px;padding:10px 13px;border-radius:11px;
         background:var(--alt);border:1px solid var(--border);margin-bottom:8px;font-size:13px}
   .chat .who{flex:1;min-width:0;overflow-wrap:anywhere}
-  .chat .id{font:11.5px ui-monospace,monospace;color:var(--dim)}
+  .chat .id{font:11.5px var(--mono);color:var(--dim)}
   .chat button{background:var(--bads);color:var(--bad);font-size:11.5px;font-weight:700;
                padding:5px 10px;border-radius:7px}
   .whatis-body h2{font-size:12.5px;margin:0 0 5px;color:var(--text)}
@@ -1950,7 +2073,7 @@ const PAGE = String.raw`<!doctype html>
        box-shadow:0 0 0 0 var(--soft);animation:pulse 2.2s ease-out infinite}
   @keyframes pulse{0%{box-shadow:0 0 0 0 var(--soft)}70%{box-shadow:0 0 0 10px transparent}
                    100%{box-shadow:0 0 0 0 transparent}}
-  .chip{font:600 11.5px/1 ui-monospace,monospace;padding:6px 11px;border-radius:999px;
+  .chip{font:600 11.5px/1 var(--mono);padding:6px 11px;border-radius:999px;
         background:var(--soft);color:var(--accent);white-space:nowrap}
   .chip.ok{background:var(--oks);color:var(--ok)}
   .chip.bad{background:var(--bads);color:var(--bad)}
@@ -1960,7 +2083,7 @@ const PAGE = String.raw`<!doctype html>
   .tabs button.on{background:var(--surface);color:var(--text);box-shadow:var(--sh)}
   .invite{background:var(--soft);border:1px solid var(--accent);border-radius:11px;
           padding:11px 13px;margin:0 0 18px;font-size:13px;line-height:1.55;color:var(--text)}
-  .invite b{font-family:ui-monospace,monospace;overflow-wrap:anywhere}
+  .invite b{font-family:var(--mono);overflow-wrap:anywhere}
   .discl2{display:flex;gap:8px;margin-top:10px}
   .discl2 button{flex:1;font-size:13px;padding:9px 12px}
   .su-tabs{margin:16px 0 14px;width:100%}
@@ -1971,7 +2094,7 @@ const PAGE = String.raw`<!doctype html>
   .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:22px}
   .stat{background:var(--glass);border:1px solid var(--gbr);border-radius:14px;padding:13px 15px;
         backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);box-shadow:var(--sh)}
-  .stat .k{font:700 10.5px/1 sans-serif;letter-spacing:.08em;text-transform:uppercase;
+  .stat .k{font:700 10.5px/1 var(--sans);letter-spacing:.08em;text-transform:uppercase;
            color:var(--dim);margin-bottom:8px}
   .stat .v{font-size:23px;font-weight:600}
   .stat .v small{font-size:12.5px;font-weight:500;color:var(--dim);margin-left:3px}
@@ -1979,9 +2102,115 @@ const PAGE = String.raw`<!doctype html>
        border:1px solid var(--border);margin-top:9px}
   .bar i{display:block;height:100%;background:var(--accent)}
 
+  /* ---- v2.2 console: icons, live badge, card status ---- */
+  .ico{width:15px;height:15px;flex:none;fill:none;stroke:currentColor;stroke-width:2;
+       stroke-linecap:round;stroke-linejoin:round}
+  .stat .k,.panel h3{display:flex;align-items:center;gap:7px}
+  .panel h3 .ico{width:17px;height:17px;color:var(--accent)}
+  .stat .v{font:600 26px/1.15 var(--mono);font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+  .stat,.panel,.dcard{transition:border-color .2s,transform .2s}
+  .stat:hover{border-color:var(--accent)}
+  .ghost.icon{padding:9px;display:inline-grid;place-items:center}
+  .ghost.icon .ico{width:18px;height:18px}
+  .ghost:hover{border-color:var(--accent)}
+  :root[data-theme="light"] .i-moon,:root:not([data-theme="light"]) .i-sun{display:none}
+  .hero{display:flex;align-items:flex-end;justify-content:space-between;gap:12px 20px;
+        flex-wrap:wrap;margin-bottom:20px}
+  .hero .sub{margin:0}
+  .live{display:inline-flex;align-items:center;gap:8px;padding:8px 14px;border-radius:999px;
+        background:var(--alt);border:1px solid var(--border);font:600 12.5px var(--mono);white-space:nowrap}
+  .live i{width:9px;height:9px;border-radius:50%;background:var(--dim);flex:none}
+  .live.on{color:var(--ok);background:var(--oks);border-color:transparent}
+  .live.on i{background:var(--ok);animation:pulse 2s ease-out infinite}
+  .live.stale{color:var(--warn);background:rgba(245,158,11,.13);border-color:transparent}
+  .live.stale i{background:var(--warn)}
+  .live .lt{color:var(--dim);font-weight:500}
+  .dcard{position:relative;overflow:hidden}
+  .dcard::before{content:"";position:absolute;inset:0 0 auto;height:2px;background:var(--st,var(--border))}
+  .dcard:hover{transform:translateY(-2px);border-color:var(--st,var(--border))}
+  .dcard.on{--st:var(--ok)} .dcard.idle{--st:var(--warn)} .dcard.off{--st:var(--bad)}
+  .sdot{width:8px;height:8px;border-radius:50%;background:var(--st,var(--dim));flex:none}
+  .dcard.on .sdot{animation:pulse 2.4s ease-out infinite}
+  .mrow.chg{animation:flash 1.6s ease-out}
+  @keyframes flash{from{background:var(--soft)}to{background:transparent}}
+  @media (prefers-reduced-motion:reduce){*,*::before{animation:none!important;transition:none!important}}
+
+  /* ---- overview: power load and alerts ---- */
+  .ov{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(320px,100%),1fr));gap:0 14px;align-items:start}
+  .ov .stats{margin-bottom:10px}
+  .pw-h{font:700 10.5px var(--sans);letter-spacing:.08em;text-transform:uppercase;color:var(--dim);margin:12px 0 2px}
+  .pbar{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:5px 10px;padding:7px 9px;margin:0 -9px;
+        border-radius:10px;cursor:pointer}
+  .pbar:hover{background:var(--alt)}
+  .pbar:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+  .pbar .n{font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .pbar b{font:700 13px var(--mono);font-variant-numeric:tabular-nums}
+  .pbar .t{grid-column:1/-1;height:8px;border-radius:999px;background:var(--alt);overflow:hidden}
+  .pbar .t i{display:block;height:100%;border-radius:999px;background:var(--m);min-width:3px}
+  .att{display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:10px;background:var(--alt);
+       border-left:3px solid var(--bad);font-size:13px;margin-bottom:7px}
+  .att.warn{border-left-color:var(--warn)} .att.ok{border-left-color:var(--ok)}
+  .att b{white-space:nowrap} .att span{color:var(--dim);min-width:0;overflow-wrap:anywhere}
+  .c-avg{stroke:var(--m);stroke-width:1;stroke-dasharray:4 4;opacity:.7}
+
+  /* ---- chart: views, compare, limits, zoom ---- */
+  .ranges{flex-wrap:wrap}
+  .sh-bar{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-start;justify-content:space-between}
+  #sh-add{width:auto;max-width:100%;padding:7px 11px;font-size:13px;border-radius:10px}
+  .sh-dates{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin:-4px 0 14px}
+  .sh-dates label,.sh-limits label{display:flex;align-items:center;gap:6px;margin:0;font-size:12.5px}
+  .sh-dates input{width:auto;padding:7px 9px;font-size:13px}
+  .legend{display:flex;gap:6px 16px;flex-wrap:wrap;font-size:12px;color:var(--dim);margin-top:8px}
+  .legend span{display:inline-flex;align-items:center;gap:6px}
+  .sh-limits{display:flex;gap:8px 12px;flex-wrap:wrap;align-items:center;margin-top:14px;padding:12px 14px;
+             border:1px solid var(--border);border-radius:12px;background:var(--alt)}
+  .sh-limits .k{font:700 10.5px var(--sans);letter-spacing:.07em;text-transform:uppercase;color:var(--dim)}
+  .sh-limits input{width:96px;padding:7px 9px;font-size:13px}
+  .sh-limits .mu{font-size:12px;color:var(--dim)}
+  .sh-limits .ghost{padding:7px 12px;font-size:13px}
+  .zoomhint{margin:10px 0 0;font-size:12px}
+  .c-band{fill:var(--m);opacity:.14}
+  .c-lim{stroke:var(--bad);stroke-width:1.2;stroke-dasharray:6 4}
+  .c-limt{fill:var(--bad)}
+  .c-out{fill:none;stroke:var(--bad);stroke-width:1.8}
+  .c-sel{fill:var(--m);opacity:.15}
+  .c-bar{fill:var(--m);opacity:.85}
+  .c-bar:hover{opacity:1}
+  .c-whisk{stroke:var(--text);stroke-width:1.2;opacity:.45}
+  .c-cell{fill:var(--m)}
+  .c-empty{fill:var(--alt)}
+
+  /* ---- dashboard tools, rooms, wall display ---- */
+  .toolbar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:4px 0 16px}
+  .toolbar input[type=search]{flex:1 1 220px;width:auto;min-width:0}
+  .toolbar .ranges{margin:0}
+  h4.room{grid-column:1/-1;margin:10px 0 -2px;font:700 12px var(--sans);letter-spacing:.07em;
+          text-transform:uppercase;color:var(--dim);display:flex;align-items:center;gap:8px}
+  h4.room span{font:600 11px var(--mono);background:var(--alt);border:1px solid var(--border);
+               border-radius:999px;padding:2px 8px;letter-spacing:0}
+  .empty.room{grid-column:1/-1}
+  .dev-room{width:auto;max-width:200px;padding:5px 9px;font-size:12.5px}
+  .dev-int{display:inline-flex;align-items:center;gap:6px;margin:0;font-weight:500;font-size:12px}
+  .dev-int input{width:74px;padding:5px 8px;font-size:12.5px}
+  label.check{display:flex;align-items:center;gap:9px;font-size:13.5px;color:var(--text);font-weight:500;margin:6px 0 14px}
+  label.check input{width:18px;height:18px;accent-color:var(--accent);flex:none}
+  input.cur{max-width:90px}
+  .wall-exit{position:fixed;right:16px;bottom:16px;z-index:60;box-shadow:var(--sh)}
+  body:not(.wall) .wall-exit{display:none}
+  body.wall header,body.wall .hero .sub,body.wall .toolbar,body.wall .dfoot,body.wall .sh-limits,
+  body.wall #t-set,body.wall .panel>p{display:none!important}
+  body.wall .wrap{max-width:none}
+  body.wall{font-size:17px;padding-top:16px}
+  body.wall h2.page{font-size:34px}
+  body.wall .stat .v{font-size:36px}
+  body.wall .dtitle{font-size:18px}
+  body.wall .mname{font-size:15px}
+  body.wall .mval{font-size:22px}
+  body.wall .mrow,body.wall .pbar{cursor:default}
+
   /* align-items:start so a two-reading device does not stretch to match a
      five-reading one and sit over dead space. */
-  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px;
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(300px,100%),1fr));gap:14px;
         align-items:start}
   .card{position:relative;overflow:hidden;background:var(--surface);border:1px solid var(--border);
         border-radius:16px;padding:16px;box-shadow:var(--sh);display:flex;flex-direction:column;
@@ -1993,9 +2222,9 @@ const PAGE = String.raw`<!doctype html>
   .cn i{width:7px;height:7px;border-radius:50%;background:var(--m);flex:none}
   .cd{font-size:11.5px;color:var(--dim);margin-top:3px;padding-left:14px}
   .val{display:flex;align-items:baseline;gap:5px;flex-wrap:wrap}
-  .val b{font:700 30px/1.05 ui-monospace,monospace;letter-spacing:-.03em}
+  .val b{font:700 30px/1.05 var(--mono);letter-spacing:-.03em}
   .val span{font-size:13px;color:var(--dim);font-weight:600}
-  .range{display:flex;justify-content:space-between;font:10.5px ui-monospace,monospace;
+  .range{display:flex;justify-content:space-between;font:10.5px var(--mono);
          color:var(--dim);margin-top:3px}
   .foot{font-size:11px;color:var(--dim);margin-top:auto;padding-top:10px;
         border-top:1px solid var(--border)}
@@ -2011,8 +2240,8 @@ const PAGE = String.raw`<!doctype html>
   .panel p{margin:0 0 14px;color:var(--dim);font-size:13.5px}
   .kv{display:grid;grid-template-columns:1fr 1fr;gap:14px 20px;margin:16px 0}
   .kv .full{grid-column:1/-1}
-  .kv .k{font:700 11px sans-serif;letter-spacing:.05em;text-transform:uppercase;color:var(--dim)}
-  .kv .v{font:13.5px ui-monospace,monospace;background:var(--alt);border:1px solid var(--border);
+  .kv .k{font:700 11px var(--sans);letter-spacing:.05em;text-transform:uppercase;color:var(--dim)}
+  .kv .v{font:13.5px var(--mono);background:var(--alt);border:1px solid var(--border);
          border-radius:10px;padding:10px 12px;display:flex;align-items:center;gap:8px;
          word-break:break-all;margin-top:5px}
   .copy{background:var(--soft);color:var(--accent);font-size:11px;font-weight:700;
@@ -2021,14 +2250,14 @@ const PAGE = String.raw`<!doctype html>
   /* About panel: version, and the changelog the server carries with it. */
   .drift{font-size:12.5px;color:var(--bad);background:var(--bads);border-radius:10px;
          padding:10px 12px;margin:0 0 14px}
-  .chg-h{margin:18px 0 10px;font:700 11px sans-serif;letter-spacing:.05em;
+  .chg-h{margin:18px 0 10px;font:700 11px var(--sans);letter-spacing:.05em;
          text-transform:uppercase;color:var(--dim)}
   .chg{list-style:none;margin:0;padding:0;display:grid;gap:10px}
   .chg li{display:grid;grid-template-columns:auto 1fr;gap:12px;align-items:start;
           font-size:13px;color:var(--dim);line-height:1.5}
   /* Deliberately not .tag - that class already exists for device badges and
      uppercases its text, which would turn "v1.3.0" into "V1.3.0". */
-  .chg .vtag{font:700 11px ui-monospace,monospace;color:var(--accent);background:var(--soft);
+  .chg .vtag{font:700 11px var(--mono);color:var(--accent);background:var(--soft);
              border-radius:7px;padding:3px 8px;white-space:nowrap;text-transform:none}
   .chg li.now .vtag{background:var(--oks);color:var(--ok)}
   /* Stacked on a narrow card, the tag would stretch the full width and stop
@@ -2045,10 +2274,10 @@ const PAGE = String.raw`<!doctype html>
          padding:16px 17px;box-shadow:var(--sh);display:flex;flex-direction:column;gap:11px}
   .dhead{display:flex;align-items:center;gap:10px}
   .dtitle{font-size:15px;font-weight:600;flex:1;min-width:0;overflow-wrap:anywhere}
-  .dmodel{font:700 10px sans-serif;letter-spacing:.06em;text-transform:uppercase;
+  .dmodel{font:700 10px var(--sans);letter-spacing:.06em;text-transform:uppercase;
           color:var(--accent);background:var(--soft);padding:4px 8px;border-radius:999px;
           white-space:nowrap}
-  .deui{font:11.5px ui-monospace,monospace;color:var(--dim);margin-top:-7px}
+  .deui{font:11.5px var(--mono);color:var(--dim);margin-top:-7px}
   .mlist{display:grid;gap:1px}
   /* minmax(0,1fr) on the label and min-width:0 on the value: a plain 1fr
      refuses to shrink below its content, so one long value (a timestamp that
@@ -2064,7 +2293,7 @@ const PAGE = String.raw`<!doctype html>
   .mname em{font-style:normal;font-weight:700;color:var(--accent);margin-left:4px;cursor:help}
   .mspark{display:block;width:62px;height:20px;opacity:.7}
   .mspark svg{height:20px;display:block}
-  .mval{font:700 17px/1 ui-monospace,monospace;font-variant-numeric:tabular-nums;
+  .mval{font:700 17px/1 var(--mono);font-variant-numeric:tabular-nums;
         white-space:nowrap;text-align:right;min-width:0}
   .mval .mu{font-size:11.5px;font-weight:600;color:var(--dim);margin-left:3px}
   /* A text reading can be arbitrarily long, so it is clipped to the space it
@@ -2094,19 +2323,19 @@ const PAGE = String.raw`<!doctype html>
   .dev{flex-wrap:wrap}
   .dev .meta{font-size:12px;color:var(--dim);margin-top:5px;display:flex;flex-wrap:wrap;
              gap:5px 10px;align-items:center}
-  .dev-name{font:600 14px inherit;color:var(--text);background:transparent;
+  .dev-name{font:600 14px var(--sans);color:var(--text);background:transparent;
             border:1px solid transparent;border-radius:7px;padding:3px 6px;margin-left:-6px;
             width:100%;max-width:280px;transition:background .15s,border-color .15s}
   .dev-name:hover{border-color:var(--border);background:var(--surface)}
   .dev-name:focus{border-color:var(--accent);background:var(--surface);outline:none}
-  .dev-model{font:600 12px inherit;color:var(--text);background:var(--surface);
+  .dev-model{font:600 12px var(--sans);color:var(--text);background:var(--surface);
              border:1px solid var(--border);border-radius:7px;padding:4px 7px;max-width:100%}
   .dev-model:focus{border-color:var(--accent);outline:none}
   .note{font-size:11.5px;color:var(--dim);font-style:italic}
-  .note.warn{color:#d19a0a;font-style:normal;font-weight:600}
-  code{font:11px ui-monospace,monospace;background:var(--surface);border:1px solid var(--border);
+  .note.warn{color:var(--warn);font-style:normal;font-weight:600}
+  code{font:11px var(--mono);background:var(--surface);border:1px solid var(--border);
        padding:1px 6px;border-radius:5px}
-  .tag{font:700 10px sans-serif;letter-spacing:.06em;text-transform:uppercase;color:var(--ok);
+  .tag{font:700 10px var(--sans);letter-spacing:.06em;text-transform:uppercase;color:var(--ok);
        background:var(--oks);padding:3px 7px;border-radius:999px}
   /* Status LEDs. A glow rather than a flat dot, so "live" reads at a glance
      from across a room - this is the first thing you look at when something
@@ -2131,7 +2360,7 @@ const PAGE = String.raw`<!doctype html>
   .plot{position:relative;width:100%}
   .plot svg{display:block;width:100%;height:auto;touch-action:none}
   .grid-line{stroke:var(--border);stroke-width:1}
-  .ax{fill:var(--dim);font:10.5px ui-monospace,monospace}
+  .ax{fill:var(--dim);font:10.5px var(--mono)}
   .c-area{fill:var(--m);opacity:.1}
   .c-line{fill:none;stroke:var(--m);stroke-width:2;stroke-linejoin:round;stroke-linecap:round}
   .c-hair{stroke:var(--dim);stroke-width:1;opacity:.55}
@@ -2140,14 +2369,14 @@ const PAGE = String.raw`<!doctype html>
        border-radius:9px;box-shadow:var(--sh);padding:7px 10px;font-size:12px;white-space:nowrap;
        transform:translate(-50%,-100%);opacity:0;transition:opacity .1s}
   .tip.on{opacity:1}
-  .tip b{font:700 14px ui-monospace,monospace;display:block}
+  .tip b{font:700 14px var(--mono);display:block}
   .tip .k{display:inline-block;width:14px;height:2px;background:var(--m);
           vertical-align:middle;margin-right:6px;border-radius:2px}
   .tip .w{color:var(--dim);font-size:11px}
   .figs{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:12px;margin-top:16px}
   .fig{background:var(--alt);border:1px solid var(--border);border-radius:11px;padding:11px 13px}
-  .fig .k{font:700 10px sans-serif;letter-spacing:.07em;text-transform:uppercase;color:var(--dim)}
-  .fig .v{font:600 19px ui-monospace,monospace;margin-top:5px}
+  .fig .k{font:700 10px var(--sans);letter-spacing:.07em;text-transform:uppercase;color:var(--dim)}
+  .fig .v{font:600 19px var(--mono);margin-top:5px}
   .sheet-foot{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:18px}
   .sheet-foot .hintx{color:var(--dim);font-size:12px;margin-left:auto}
   .card{cursor:pointer}
@@ -2181,7 +2410,7 @@ const PAGE = String.raw`<!doctype html>
   .dbg{list-style:none;margin:0;padding:0;max-height:340px;overflow-y:auto;
        background:var(--alt);border:1px solid var(--border);border-radius:12px;padding:10px 12px}
   .dbg li{display:grid;grid-template-columns:62px 74px 1fr;gap:10px;padding:6px 0;
-          border-top:1px solid var(--border);font:11.5px ui-monospace,monospace;
+          border-top:1px solid var(--border);font:11.5px var(--mono);
           word-break:break-word;align-items:baseline}
   .dbg li:first-child{border-top:none}
   .dbg .ts{color:var(--dim)}
@@ -2209,17 +2438,44 @@ const PAGE = String.raw`<!doctype html>
     </div>
     <p class="sheet-sub" id="sh-sub"></p>
     <div class="mchips" id="sh-metrics"></div>
+    <div class="sh-bar">
+      <div class="ranges" id="sh-views">
+        <button data-view="trend" class="on" type="button">Trend</button>
+        <button data-view="daily" type="button">Daily</button>
+        <button data-view="pattern" type="button">Pattern</button>
+      </div>
+      <select id="sh-add" aria-label="Compare with another reading"></select>
+    </div>
     <div class="ranges" id="sh-ranges">
+      <button data-range="0.0416666667" type="button">1 hour</button>
+      <button data-range="0.25" type="button">6 hours</button>
       <button data-range="1" class="on" type="button">24 hours</button>
       <button data-range="7" type="button">7 days</button>
       <button data-range="30" type="button">30 days</button>
+      <button data-range="custom" type="button">Custom</button>
+    </div>
+    <div class="sh-dates" id="sh-dates" hidden>
+      <label>From <input type="date" id="sh-from"></label>
+      <label>To <input type="date" id="sh-to"></label>
+      <button class="ghost" id="sh-apply" type="button">Show</button>
     </div>
     <div class="plot" id="sh-plot"></div>
+    <div class="legend" id="sh-legend"></div>
     <div class="figs" id="sh-figs"></div>
+    <div class="sh-limits">
+      <span class="k">Alert limits</span>
+      <label>Below <input type="number" step="any" id="sh-min"></label>
+      <label>Above <input type="number" step="any" id="sh-max"></label>
+      <span class="mu" id="sh-limunit"></span>
+      <button class="ghost" id="sh-limsave" type="button">Save limits</button>
+      <span class="hintx" id="sh-limmsg" role="status"></span>
+    </div>
     <div class="sheet-foot">
       <button class="ghost" id="sh-csv" type="button">Download CSV</button>
+      <button class="ghost" id="sh-zoomout" type="button" hidden>Reset zoom</button>
       <span class="hintx" id="sh-count"></span>
     </div>
+    <p class="sheet-sub zoomhint">Drag across the trend chart to zoom in.</p>
   </div>
 </div>
 
@@ -2421,6 +2677,7 @@ const PAGE = String.raw`<!doctype html>
 
 <!-- ============ APP ============ -->
 <div class="wrap" id="v-app" hidden>
+  <button class="ghost wall-exit" id="wall-off" type="button">Exit wall display</button>
   <header>
     <div class="brand"><span class="dot"></span>DP Sensor Hub</div>
     <div class="tabs">
@@ -2429,19 +2686,52 @@ const PAGE = String.raw`<!doctype html>
     </div>
     <span class="chip ok" id="dbchip">Firestore live</span>
     <span class="chip" id="wschip"></span>
+    <button class="ghost icon" id="theme" type="button" aria-label="Switch light or dark theme" title="Switch light or dark theme">
+      <svg class="ico i-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
+      <svg class="ico i-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
+    </button>
     <button class="ghost" id="logout" type="button">Log out</button>
   </header>
 
   <div id="t-dash">
-    <h2 class="page">Live dashboard</h2>
-    <p class="sub">Every uplink your gateway forwards to the broker lands here, decoded and plotted.</p>
+    <div class="hero">
+      <div>
+        <h2 class="page">Live dashboard</h2>
+        <p class="sub">Every uplink your gateway forwards to the broker lands here, decoded and plotted.</p>
+      </div>
+      <div class="live wait" id="live"><i></i><span id="live-s" role="status">Waiting for data</span><span class="lt" id="live-t"></span></div>
+    </div>
     <div class="stats">
-      <div class="stat"><div class="k">Devices</div><div class="v" id="s-dev">0</div></div>
-      <div class="stat"><div class="k">Metrics</div><div class="v" id="s-met">0</div></div>
-      <div class="stat"><div class="k">Readings stored</div><div class="v" id="s-up">0</div></div>
-      <div class="stat"><div class="k">Last message</div><div class="v" id="s-last">&mdash;</div></div>
-      <div class="stat"><div class="k">Storage used</div><div class="v" id="s-sto">0<small>%</small></div>
+      <div class="stat"><div class="k"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M15 2v2M15 20v2M2 15h2M2 9h2M20 15h2M20 9h2M9 2v2M9 20v2"/></svg>Devices</div><div class="v" id="s-dev">0</div></div>
+      <div class="stat"><div class="k"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>Metrics</div><div class="v" id="s-met">0</div></div>
+      <div class="stat"><div class="k"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/></svg>Readings stored</div><div class="v" id="s-up">0</div></div>
+      <div class="stat"><div class="k"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>Last message</div><div class="v" id="s-last">&mdash;</div></div>
+      <div class="stat"><div class="k"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M22 12H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/><path d="M6 16h.01M10 16h.01"/></svg>Storage used</div><div class="v" id="s-sto">0<small>%</small></div>
         <div class="bar"><i id="s-bar" style="width:0%"></i></div></div>
+    </div>
+    <div class="ov" id="ov" hidden>
+      <section class="panel" id="pw" hidden>
+        <h3><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg>Power &amp; load</h3>
+        <p>Live draw from smart plugs and current sensors. Select a row to chart it.</p>
+        <div class="stats" id="pw-tiles"></div>
+        <div id="pw-bars"></div>
+      </section>
+      <section class="panel">
+        <h3><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4M12 17h.01"/></svg>Needs attention</h3>
+        <p>Leaks, low batteries, broken limits and devices that have gone quiet.</p>
+        <div id="att"></div>
+      </section>
+    </div>
+    <div class="toolbar" id="dash-tools" hidden>
+      <input type="search" id="dash-q" placeholder="Search devices, models, rooms…" aria-label="Search devices">
+      <div class="ranges" id="dash-f" role="group" aria-label="Filter by status">
+        <button data-f="all" class="on" type="button">All</button>
+        <button data-f="on" type="button">Reporting</button>
+        <button data-f="idle" type="button">Quiet</button>
+        <button data-f="off" type="button">Silent</button>
+        <button data-f="alert" type="button">Alerts</button>
+      </div>
+      <button class="ghost" id="wall-on" type="button">Wall display</button>
     </div>
     <div class="grid" id="grid"></div>
     <div class="empty" id="dash-empty">
@@ -2501,6 +2791,19 @@ const PAGE = String.raw`<!doctype html>
       <p>These register themselves. The EUI says <em>which</em> device and which vendor &mdash;
          the model is worked out from the fields in the payload.</p>
       <div id="devs"></div>
+    </div>
+
+    <div class="panel">
+      <h3>Alerts &amp; energy</h3>
+      <p>Set a reading's alert limits from its history chart. Alerts go to everyone signed in to the Telegram bot.</p>
+      <label class="check"><input type="checkbox" id="al-on" checked> Send Telegram alerts for leaks, low batteries, broken limits and silent devices</label>
+      <label for="en-tariff">Electricity tariff <span class="lbl-note">price per kWh, for cost on power charts</span></label>
+      <div class="mb-add">
+        <input id="en-tariff" type="number" min="0" step="any" placeholder="0.218" aria-label="Price per kWh">
+        <input id="en-cur" maxlength="5" placeholder="RM" aria-label="Currency" class="cur">
+        <button class="ghost" id="en-save" type="button">Save</button>
+      </div>
+      <span class="hint" id="en-msg" role="status"></span>
     </div>
 
     <div class="panel">
@@ -2921,6 +3224,8 @@ var META = {
   dwell_time_avg:{u:'',dp:0,n:'Average dwell time'},
   dwell_time_max:{u:'',dp:0,n:'Longest dwell time'}
 }
+// Only the built-in readings have a --m-* colour in the stylesheet.
+var COLOURED=Object.keys(META)
 Object.assign(META, __EXTRA_META__)
 
 // Gateway metadata, not measurements. The server strips these on write, but a
@@ -2958,8 +3263,11 @@ function meta(key,type){
 // loads rather than changing every refresh.
 var CYCLE=['value','humidity','co2','power','current','di_1','pressure','battery']
 function mvar(key){
-  if(META[key])return 'var(--m-'+key+')'
+  if(COLOURED.indexOf(key)>=0)return 'var(--m-'+key+')'
   if(/^region_\d{1,2}$/.test(key))return 'var(--m-region)'
+  // Phases share their base colour: current_2 reads as current, not a new series.
+  var base=key.replace(/_\d$/,'')
+  if(COLOURED.indexOf(base)>=0)return 'var(--m-'+base+')'
   var h=0
   for(var i=0;i<key.length;i++)h=(h*31+key.charCodeAt(i))>>>0
   return 'var(--m-'+CYCLE[h%CYCLE.length]+')'
@@ -3357,6 +3665,55 @@ function friendly(err){
 }
 
 $('logout').onclick=function(){signOut(auth)}
+
+// -------- alerts, energy tariff, dashboard tools, wall display --------
+$('al-on').onchange=async function(){
+  try{await setDoc(doc(fs,'workspaces',myUid,'settings','telegram'),{alerts:this.checked},{merge:true});$('en-msg').textContent=this.checked?'Telegram alerts on.':'Telegram alerts off.'}
+  catch(e){$('en-msg').textContent=e.message}
+}
+$('en-save').onclick=async function(){
+  var t=$('en-tariff').value.trim(),n=Number(t)
+  if(t&&!(n>=0&&n<1000)){$('en-msg').textContent='Enter the price of one kWh, for example 0.218.';return}
+  try{
+    await setDoc(doc(fs,'workspaces',myUid,'settings','energy'),{tariff:t?n:0,currency:$('en-cur').value.trim().slice(0,5)},{merge:true})
+    $('en-msg').textContent='Saved. Power charts now show cost.'
+  }catch(e){$('en-msg').textContent=e.message}
+}
+$('dash-q').addEventListener('input',function(){dashQ=this.value.trim().toLowerCase();render()})
+$('dash-f').addEventListener('click',function(e){
+  var b=e.target.closest('[data-f]');if(!b)return
+  dashF=b.dataset.f
+  this.querySelectorAll('button').forEach(function(x){x.classList.toggle('on',x===b)})
+  render()
+})
+
+// Wall display: read-only, large type, no chrome, scrolling through the page
+// on its own. Start it with the button or by opening the dashboard at #wall.
+var wallTimer=null
+function wall(on){
+  document.body.classList.toggle('wall',on)
+  clearInterval(wallTimer)
+  if(on){
+    var dash=document.querySelector('[data-tab="dash"]');if(dash)dash.click()
+    var el=document.documentElement
+    if(el.requestFullscreen&&!document.fullscreenElement)el.requestFullscreen().catch(function(){})
+    wallTimer=setInterval(function(){
+      var end=window.scrollY+innerHeight>=document.documentElement.scrollHeight-4
+      window.scrollTo({top:end?0:window.scrollY+innerHeight*0.8,behavior:'smooth'})
+    },15000)
+  }else if(document.fullscreenElement)document.exitFullscreen().catch(function(){})
+}
+$('wall-on').onclick=function(){wall(true)}
+$('wall-off').onclick=function(){wall(false)}
+document.addEventListener('keydown',function(e){if(e.key==='Escape'&&document.body.classList.contains('wall'))wall(false)})
+document.addEventListener('fullscreenchange',function(){if(!document.fullscreenElement&&document.body.classList.contains('wall'))wall(false)})
+if(location.hash==='#wall')wall(true)
+$('theme').onclick=function(){
+  var light=document.documentElement.dataset.theme!=='light'
+  if(light)document.documentElement.dataset.theme='light'
+  else delete document.documentElement.dataset.theme
+  try{localStorage.setItem('theme',light?'light':'dark')}catch(e){}
+}
 document.querySelectorAll('.tabs button').forEach(function(btn){
   btn.onclick=function(){
     document.querySelectorAll('.tabs button').forEach(function(b){b.classList.toggle('on',b===btn)})
@@ -3462,6 +3819,14 @@ async function start(uid){
 
   unsubs.push(onSnapshot(doc(fs,'workspaces',uid,'settings','telegram'),function(s){
     tgCfg=s.exists()?s.data():null;renderTelegram()
+    $('al-on').checked=!tgCfg||tgCfg.alerts!==false
+  }))
+  unsubs.push(onSnapshot(doc(fs,'workspaces',uid,'settings','energy'),function(s){
+    energyCfg=s.exists()?s.data():null
+    if(document.activeElement!==$('en-tariff')&&document.activeElement!==$('en-cur')){
+      $('en-tariff').value=energyCfg&&energyCfg.tariff>0?energyCfg.tariff:''
+      $('en-cur').value=(energyCfg&&energyCfg.currency)||''
+    }
   }))
   unsubs.push(onSnapshot(doc(fs,'workspaces',uid,'settings','telegramUsers'),function(s){
     tgChats=(s.exists()&&s.data().users)||{};renderTelegram()
@@ -3536,8 +3901,139 @@ function keyRank(k){
 }
 function orderKeys(a,b){return keyRank(a)-keyRank(b)||a.localeCompare(b)}
 
+// Watt-hours under a [ts,W] series (trapezoids).
+// shortcut: gaps over 1 h count as no data, not interpolated; widen if plugs report less often.
+function energyWh(rows){
+  var wh=0
+  for(var i=1;i<rows.length;i++){
+    var dt=rows[i][0]-rows[i-1][0]
+    if(dt>0&&dt<=3600000)wh+=(rows[i][1]+rows[i-1][1])/2*dt/3600000
+  }
+  return wh
+}
+
+// One bucket per local calendar day: average, low, high and (for power) kWh.
+// Hourly rows carry their own low/high and watt-hours; raw rows do not.
+function dailyBuckets(rows,key){
+  var map={},order=[]
+  rows.forEach(function(r){
+    var d=new Date(r[0]),k=new Date(d.getFullYear(),d.getMonth(),d.getDate()).getTime()
+    if(!map[k]){map[k]=[];order.push(k)}
+    map[k].push(r)
+  })
+  return order.map(function(k){
+    var rs=map[k],sum=0,lo=Infinity,hi=-Infinity
+    rs.forEach(function(r){sum+=r[1];lo=Math.min(lo,r[2]==null?r[1]:r[2]);hi=Math.max(hi,r[3]==null?r[1]:r[3])})
+    var o={day:k,avg:sum/rs.length,min:lo,max:hi}
+    if(key==='power')o.kwh=(rs[0][4]!==undefined?rs.reduce(function(s,r){return s+(r[4]||0)},0):energyWh(rs))/1000
+    return o
+  })
+}
+
+// Weekday (Monday first) x hour-of-day sums, for the Pattern heatmap.
+function patternGrid(rows){
+  var g=[]
+  for(var d=0;d<7;d++){g.push([]);for(var h=0;h<24;h++)g[d].push({sum:0,n:0})}
+  rows.forEach(function(r){var t=new Date(r[0]),c=g[(t.getDay()+6)%7][t.getHours()];c.sum+=r[1];c.n++})
+  return g
+}
+
+var LOAD_KEYS=['power','current','current_1','current_2','current_3']
+// shortcut: one freshness scale for every device (Milesight reports every 10 min by default);
+// make it per device if some sensors report slower.
+var LIVE_MS=900000,SILENT_MS=7200000
+// A device with its own report interval (minutes) is quiet after 1.5 intervals
+// and silent after 3.
+function freshness(ms,interval){
+  var a=Date.now()-ms,live=interval>0?interval*90000:LIVE_MS,silent=interval>0?interval*180000:SILENT_MS
+  return !ms?'':a<live?'on':a<silent?'idle':'off'
+}
+
+// Everything worth a look on one device: [severity, what, detail].
+function deviceIssues(dev,v){
+  var out=[],name=dev.name||dev.eui||'device'
+  if(v){
+    if(isOn(v.leak))out.push(['bad','Leak detected',name])
+    if(typeof v.battery==='number'&&v.battery<20)out.push(['warn','Battery '+Math.round(v.battery)+'%',name])
+    Object.keys(dev.limits||{}).forEach(function(k){
+      var l=dev.limits[k],x=v[k],m=meta(k,dev.type)
+      if(typeof x!=='number'||!l)return
+      if(l.min!=null&&x<l.min)out.push(['bad','Below limit',name+' · '+m.n+' '+fmt(x,m)+m.u+' (limit '+l.min+')'])
+      else if(l.max!=null&&x>l.max)out.push(['bad','Above limit',name+' · '+m.n+' '+fmt(x,m)+m.u+' (limit '+l.max+')'])
+    })
+  }
+  var seen=dev.lastSeenAt&&dev.lastSeenAt.toMillis?dev.lastSeenAt.toMillis():0
+  if(seen&&freshness(seen,dev.interval)==='off')out.push(['warn','Silent '+ago(seen).replace(' ago',''),name])
+  return out
+}
+function isOn(v){return v===1||v===true||v==='on'||v==='open'||v==='leak'}
+
+// Overview above the device cards: where the power goes, and what needs a look.
+function renderOverview(){
+  var ids=Object.keys(devices),load={W:[],A:[]},att=[],phases=[],now=Date.now()
+  ids.forEach(function(id){
+    var dev=devices[id],v=(telemetry[id]||{}).values,name=dev.name||id
+    if(v){
+      LOAD_KEYS.forEach(function(k){
+        if(typeof v[k]!=='number')return
+        var m=meta(k,dev.type)
+        load[k==='power'?'W':'A'].push({id:id,k:k,v:v[k],m:m,n:name+(/_\d$/.test(k)?' · '+m.n:'')})
+      })
+      var ph=[v.current_1,v.current_2,v.current_3]
+      if(ph.every(function(x){return typeof x==='number'})){
+        var avg=(ph[0]+ph[1]+ph[2])/3
+        if(avg>0)phases.push((Math.max.apply(null,ph)-Math.min.apply(null,ph))/avg*100)
+      }
+    }
+    att=att.concat(deviceIssues(dev,v))
+  })
+
+  function sum(list){return list.reduce(function(s,r){return s+r.v},0)}
+  function bars(list,u){
+    var max=Math.max.apply(null,list.map(function(r){return Math.abs(r.v)}))||1
+    return list.sort(function(a,b){return b.v-a.v}).map(function(r){
+      return '<div class="pbar" style="--m:'+mvar(r.k)+'" data-hist="'+esc(r.id)+'" data-metric-key="'+esc(r.k)+
+        '" tabindex="0" role="button" title="Chart this reading"><span class="n">'+esc(r.n)+'</span>'+
+        '<b>'+fmt(r.v,r.m)+' '+u+'</b><span class="t"><i style="width:'+(Math.abs(r.v)/max*100).toFixed(1)+'%"></i></span></div>'
+    }).join('')
+  }
+  var tile=function(k,v,u){return '<div class="stat"><div class="k">'+k+'</div><div class="v">'+v+'<small>'+u+'</small></div></div>'}
+  var W=sum(load.W),hasLoad=load.W.length+load.A.length>0
+  $('pw-tiles').innerHTML=
+    (load.W.length?tile('Live load',W>=1000?(W/1000).toFixed(2):W.toFixed(0),W>=1000?'kW':'W'):'')+
+    (load.A.length?tile('Current draw',sum(load.A).toFixed(1),'A'):'')+
+    (phases.length?tile('Phase imbalance',Math.max.apply(null,phases).toFixed(1),'%'):'')
+  $('pw-bars').innerHTML=
+    (load.W.length?'<div class="pw-h">Power</div>'+bars(load.W,'W'):'')+
+    (load.A.length?'<div class="pw-h">Current</div>'+bars(load.A,'A'):'')
+  show($('pw'),hasLoad)
+
+  $('att').innerHTML=att.length
+    ? att.map(function(a){return '<div class="att '+a[0]+'"><b>'+esc(a[1])+'</b><span>'+esc(a[2])+'</span></div>'}).join('')
+    : '<div class="att ok"><b>All clear</b><span>No leaks, low batteries, broken limits or silent devices.</span></div>'
+  show($('ov'),ids.length>0)
+}
+
+var lastVals={},newestMs=0
+
+// Header badge and "last message" tile tick on their own, so "live" never
+// sits on a frozen timestamp between uplinks.
+function paintLive(){
+  var st=newestMs?(freshness(newestMs)==='on'?'on':'stale'):'wait'
+  var label={on:'Live',stale:'Stale',wait:'Waiting for data'}[st]
+  $('live').className='live '+st
+  // Only touch the status region when the state changes, so screen readers hear it once.
+  if($('live-s').textContent!==label)$('live-s').textContent=label
+  $('live-t').textContent=newestMs?(st==='on'?'updated ':'last uplink ')+ago(newestMs):''
+  $('s-last').innerHTML=newestMs?ago(newestMs).replace(/^(\S+)\s(.*)$/,'$1 <small>$2</small>'):'&mdash;'
+}
+setInterval(function(){if(newestMs)paintLive()},5000)
+
+// Dashboard search and status filter; cards are grouped by room when any device has one.
+var dashQ='',dashF='all'
+
 function render(){
-  var ids=Object.keys(devices),cards=[],metrics=0,newest=0
+  var ids=Object.keys(devices),cards=[],metrics=0,newest=0,total=0
 
   ids.forEach(function(id){
     var dev=devices[id],tel=telemetry[id]
@@ -3568,7 +4064,10 @@ function render(){
         ? ' data-hist="'+esc(id)+'" data-metric-key="'+esc(key)+'" tabindex="0" role="button"'+
           ' title="Chart the history of this reading"'
         : ''
-      return '<div class="mrow" style="--m:'+mvar(key)+'"'+open+'>'+
+      // Briefly highlight a reading the moment a new uplink changes it.
+      var pk=id+'|'+key,chg=pk in lastVals&&lastVals[pk]!==v
+      lastVals[pk]=v
+      return '<div class="mrow'+(chg?' chg':'')+'" style="--m:'+mvar(key)+'"'+open+'>'+
         '<i class="mdot"></i>'+
         '<span class="mname">'+esc(m.n)+
           (m.derived?'<em title="This build does not recognise this reading - the name is derived from the payload">?</em>':'')+
@@ -3578,37 +4077,53 @@ function render(){
     }).join('')
 
     var chartable=keys.filter(function(k){return typeof tel.values[k]==='number'})
-    var updated=tel.updatedAt&&tel.updatedAt.toMillis?ago(tel.updatedAt.toMillis()):'just now'
+    var ms=tel.updatedAt&&tel.updatedAt.toMillis?tel.updatedAt.toMillis():0
+    var updated=ms?ago(ms):'just now',st=freshness(ms,dev.interval)
+    total++
+    var hay=[dev.name,id,dev.eui,dev.room,SHORT[dev.type],dev.type].join(' ').toLowerCase()
+    if(dashQ&&hay.indexOf(dashQ)<0)return
+    if(dashF==='alert'?!deviceIssues(dev,tel.values).length:dashF!=='all'&&dashF!==st)return
 
-    cards.push('<article class="dcard">'+
+    cards.push({room:dev.room||'',html:'<article class="dcard '+st+'">'+
       '<div class="dhead">'+
+        '<i class="sdot" role="img" aria-label="'+({on:'Reporting',idle:'Quiet',off:'Silent'}[st]||'Unknown')+'"></i>'+
         '<div class="dtitle">'+esc(dev.name||id)+'</div>'+
         '<span class="dmodel">'+esc(SHORT[dev.type]||dev.type||'?')+'</span>'+
       '</div>'+
-      '<div class="deui">EUI '+esc(dev.eui||'unknown')+'</div>'+
+      '<div class="deui">EUI '+esc(dev.eui||'unknown')+(dev.room?' · '+esc(dev.room):'')+'</div>'+
       '<div class="mlist">'+rows+'</div>'+
       '<div class="dfoot"><span class="dwhen">Updated '+updated+'</span>'+
         (chartable.length
           ? '<button class="hist" type="button" data-hist="'+esc(id)+'">View history</button>'
           : '<span class="dwhen">nothing to chart yet</span>')+
-      '</div></article>')
+      '</div></article>'})
   })
 
-  $('grid').innerHTML=cards.join('')
-  show($('grid'),cards.length>0)
-  show($('dash-empty'),cards.length===0)
+  var rooms=cards.some(function(c){return c.room}),last=null,html=''
+  if(rooms)cards.sort(function(a,b){return (a.room?0:1)-(b.room?0:1)||a.room.localeCompare(b.room)})
+  cards.forEach(function(c){
+    if(rooms&&c.room!==last){
+      last=c.room
+      html+='<h4 class="room">'+esc(c.room||'No room')+' <span>'+cards.filter(function(x){return x.room===c.room}).length+'</span></h4>'
+    }
+    html+=c.html
+  })
+  $('grid').innerHTML=html||'<div class="empty room">No devices match this search or filter.</div>'
+  show($('grid'),total>0)
+  show($('dash-tools'),total>0)
+  show($('dash-empty'),total===0)
 
   $('s-dev').textContent=ids.length
   $('s-met').textContent=metrics
   $('s-up').textContent=storage&&storage.storedReadings?storage.storedReadings.toLocaleString():'0'
-  $('s-last').innerHTML=newest?ago(newest).replace(/^(\S+)\s(.*)$/,'$1 <small>$2</small>'):'&mdash;'
+  newestMs=newest;paintLive()
 
   var used=storage&&storage.usedBytes?storage.usedBytes:0
   var pct=Math.min(100,used/1073741824*100)
   $('s-sto').innerHTML=pct.toFixed(1)+'<small>%</small>'
   $('s-bar').style.width=pct+'%'
 
-  renderDevices();renderStorage();renderHealth()
+  renderOverview();renderDevices();renderStorage();renderHealth()
 }
 
 function renderDevices(){
@@ -3656,6 +4171,11 @@ function renderDevices(){
       '<div class="meta">'+
         '<select class="dev-model" data-model="'+esc(id)+'" aria-label="Device model">'+opts+'</select>'+
         note+
+      '</div>'+
+      '<div class="meta">'+
+        '<input class="dev-room" data-room="'+esc(id)+'" value="'+esc(d.room||'')+'" maxlength="30" placeholder="Room or area" aria-label="Room or area">'+
+        '<label class="dev-int">Reports every <input type="number" min="1" max="1440" step="1" data-interval="'+esc(id)+
+          '" value="'+(d.interval>0?d.interval:'')+'" placeholder="10" aria-label="Report interval in minutes"> min</label>'+
       '</div></div></div>'
   }).join('')
 }
@@ -3809,12 +4329,12 @@ $('mb-add').onclick=async function(){
     $('mb-ok').appendChild(document.createTextNode(
       'Added. Send them this code so they can set up in Telegram \u2014 it works once, and lasts a week:'))
     var big=document.createElement('div')
-    big.style.cssText='font:700 22px ui-monospace,monospace;letter-spacing:.16em;margin:9px 0'
+    big.style.cssText='font:700 22px var(--mono);letter-spacing:.16em;margin:9px 0'
     big.textContent=code
     $('mb-ok').appendChild(big)
     $('mb-ok').appendChild(document.createTextNode('Or this link, to sign in on the dashboard:'))
     var pre=document.createElement('div')
-    pre.style.cssText='font:12px ui-monospace,monospace;margin-top:6px;overflow-wrap:anywhere'
+    pre.style.cssText='font:12px var(--mono);margin-top:6px;overflow-wrap:anywhere'
     pre.textContent=inviteLink(addr)
     $('mb-ok').appendChild(pre)
     show($('mb-ok'),1)
@@ -4086,6 +4606,19 @@ $('cmd-send').onclick=async function(){
 // and not a certainty. Without a way to correct it, a wrong guess is permanent -
 // so this is not a nicety.
 $('devs').addEventListener('change',async function(e){
+  var room=e.target.closest('[data-room]')
+  if(room){
+    var r=room.value.trim().slice(0,30)
+    await updateDoc(doc(fs,'workspaces',myUid,'devices',room.dataset.room),{room:r||deleteField()})
+    return
+  }
+  var iv=e.target.closest('[data-interval]')
+  if(iv){
+    var n=Math.round(Number(iv.value))
+    if(iv.value.trim()&&!(n>=1&&n<=1440)){iv.value=devices[iv.dataset.interval].interval||'';return}
+    await updateDoc(doc(fs,'workspaces',myUid,'devices',iv.dataset.interval),{interval:iv.value.trim()?n:deleteField()})
+    return
+  }
   var name=e.target.closest('[data-rename]')
   if(name){
     var v=name.value.trim().slice(0,40)
@@ -4113,14 +4646,19 @@ $('devs').addEventListener('change',async function(e){
 
 // -------- history chart --------
 //
-// Reads the readings subcollection the broker writes to. The rolling 20 on the
-// telemetry doc is the live view; this is the archive, and it is the only thing
-// that can answer "what did it do overnight".
-var chart = { dev:null, key:null, days:1, rows:[], busy:false, request:0 }
+// 24 hours and less read the raw readings the broker writes; longer ranges
+// read its hourly roll-ups, so 30 days is complete rather than the newest 500
+// readings. Up to four lines share the chart, in at most two units (left and
+// right axis). Daily and Pattern views reuse whatever the range loaded.
+var chart = { dev:null, key:null, days:1, from:null, to:null, extra:[], view:'trend',
+              zoom:null, rows:[], series:[], busy:false, request:0, limited:false }
+var energyCfg=null
+// Extra lines get their own hue AND dash, so they differ without colour too.
+var DASH=['','6 4','2 3','10 4']
 
-function fmtTime(ms,days){
+function fmtTime(ms,span){
   var d=new Date(ms),p=function(n){return n<10?'0'+n:''+n}
-  if(days<=1)return p(d.getHours())+':'+p(d.getMinutes())
+  if(span<=1)return p(d.getHours())+':'+p(d.getMinutes())
   return d.getDate()+'/'+(d.getMonth()+1)
 }
 
@@ -4136,66 +4674,124 @@ function niceTicks(lo,hi,want){
   return out.length?out:[lo,hi]
 }
 
-// The popup belongs to a DEVICE, not to one reading: it opens with a chip per
-// chartable metric so you can move between them without closing it. Opening
-// from a specific row preselects that row's metric.
-function openDevice(devId,key){
-  var dev=devices[devId],tel=telemetry[devId]
-  if(!dev||!tel||!tel.values)return
-
-  // Only numeric readings can be charted, and gateway metadata is not a
-  // reading at all.
-  var keys=Object.keys(tel.values).filter(function(k){
+// Only numeric readings can be charted, and gateway metadata is not a reading.
+function chartKeys(devId){
+  var tel=telemetry[devId]
+  if(!tel||!tel.values)return []
+  return Object.keys(tel.values).filter(function(k){
     return isReading(k,tel.values[k])&&typeof tel.values[k]==='number'&&!meta(k).bool
   }).sort(orderKeys)
-  if(!keys.length)return
-  if(!key||keys.indexOf(key)<0)key=keys[0]
+}
+function unitOf(s){return meta(s.key,(devices[s.dev]||{}).type).u||''}
+function seriesName(s){
+  var m=meta(s.key,(devices[s.dev]||{}).type)
+  return s.dev===chart.dev?m.n:((devices[s.dev]||{}).name||s.dev)+' · '+m.n
+}
+function seriesColour(i,key){return i?'var(--s'+i+')':mvar(key)}
 
-  chart.dev=devId
-  chart.key=key
+// The popup belongs to a DEVICE, not to one reading: it opens with a chip per
+// chartable metric so you can move between them without closing it.
+function openDevice(devId,key){
+  var keys=chartKeys(devId)
+  if(!devices[devId]||!keys.length)return
+  if(!key||keys.indexOf(key)<0)key=keys[0]
+  chart.dev=devId; chart.key=key; chart.extra=[]; chart.zoom=null
   $('sheet').hidden=false
-  $('sh-metrics').innerHTML=keys.map(function(k){
-    return '<button type="button" class="mchip'+(k===key?' on':'')+
-      '" data-metric="'+esc(k)+'" style="--m:'+mvar(k)+'"><i></i>'+esc(meta(k).n)+'</button>'
-  }).join('')
-  paintSheetHead()
+  paintSheet()
   loadChart()
 }
 
-function paintSheetHead(){
+function paintSheet(){
   var dev=devices[chart.dev]||{},m=meta(chart.key,dev.type)
   $('sheet').querySelector('.sheet-card').style.setProperty('--m',mvar(chart.key))
   $('sh-title').textContent=m.n
-  $('sh-sub').textContent=(dev.name||chart.dev)+' · '+(SHORT[dev.type]||dev.type||'')+
-    ' · EUI '+(dev.eui||'')
+  $('sh-sub').textContent=(dev.name||chart.dev)+' · '+(SHORT[dev.type]||dev.type||'')+' · EUI '+(dev.eui||'')
+  // A compared reading shows as its own chip, in its line colour, and
+  // clicking it again removes the line.
+  var dropChip=function(s,i){
+    return '<button type="button" class="mchip on" data-drop="'+i+'" style="--m:'+seriesColour(i+1)+
+      '" title="Remove this line"><i></i>'+esc(seriesName(s))+' &times;</button>'
+  }
+  $('sh-metrics').innerHTML=chartKeys(chart.dev).map(function(k){
+    var i=chart.extra.findIndex(function(s){return s.dev===chart.dev&&s.key===k})
+    if(i>=0)return dropChip(chart.extra[i],i)
+    return '<button type="button" class="mchip'+(k===chart.key?' on':'')+'" data-metric="'+esc(k)+
+      '" style="--m:'+mvar(k)+'"><i></i>'+esc(meta(k,dev.type).n)+'</button>'
+  }).join('')+chart.extra.map(function(s,i){return s.dev===chart.dev?'':dropChip(s,i)}).join('')
+
+  // Compare with: this device's other readings, or the same reading elsewhere.
+  var used=seriesList().map(function(s){return s.dev+'|'+s.key}),opts=[]
+  chartKeys(chart.dev).forEach(function(k){if(used.indexOf(chart.dev+'|'+k)<0)opts.push({dev:chart.dev,key:k})})
+  Object.keys(devices).forEach(function(id){
+    if(id!==chart.dev&&chartKeys(id).indexOf(chart.key)>=0&&used.indexOf(id+'|'+chart.key)<0)opts.push({dev:id,key:chart.key})
+  })
+  $('sh-add').innerHTML='<option value="">+ Compare with…</option>'+opts.map(function(o){
+    return '<option value="'+esc(o.dev+'|'+o.key)+'">'+esc(seriesName(o))+'</option>'
+  }).join('')
+  show($('sh-add'),chart.view==='trend'&&chart.extra.length<3&&opts.length>0)
+
+  $('sh-ranges').querySelectorAll('[data-range]').forEach(function(b){
+    b.classList.toggle('on',b.dataset.range==='custom'?!!chart.from:!chart.from&&Math.abs(Number(b.dataset.range)-chart.days)<1e-6)
+  })
+  $('sh-views').querySelectorAll('[data-view]').forEach(function(b){b.classList.toggle('on',b.dataset.view===chart.view)})
+  var lim=(dev.limits||{})[chart.key]||{}
+  $('sh-min').value=lim.min!=null?lim.min:''
+  $('sh-max').value=lim.max!=null?lim.max:''
+  $('sh-limunit').textContent=m.u
+  $('sh-limmsg').textContent=''
+  show($('sh-zoomout'),!!chart.zoom)
 }
 
-function closeChart(){ $('sheet').hidden=true; chart.request++; chart.busy=false; chart.rows=[]; $('sh-csv').disabled=true }
+function closeChart(){ $('sheet').hidden=true; chart.request++; chart.busy=false; chart.rows=[]; chart.series=[]; $('sh-csv').disabled=true }
+
+function seriesList(){return [{dev:chart.dev,key:chart.key}].concat(chart.extra||[])}
+function rangeWindow(){
+  if(chart.from)return [chart.from,chart.to]
+  var now=Date.now();return [now-chart.days*86400000,now+60000]
+}
+
+// Rows are [ts, value, min, max, wh]; raw readings carry only [ts, value].
+async function fetchRows(s,since,until,hourly){
+  var filters=[where('ts','>=',since)]
+  if(chart.from)filters.push(where('ts','<',until))
+  var ref=function(sub,n){
+    return query.apply(null,[collection(fs,'workspaces',myUid,'telemetry',s.dev,sub)].concat(filters,[orderBy('ts','desc'),limit(n)]))
+  }
+  if(hourly){
+    var hs=await getDocs(ref('hourly',800)),rows=[]
+    hs.forEach(function(d){
+      var h=d.data(),n=h.n&&h.n[s.key]
+      if(n>0&&Number.isFinite(h.ts))rows.push([h.ts,h.sum[s.key]/n,h.min[s.key],h.max[s.key],s.key==='power'?(h.wh||0):undefined])
+    })
+    // Older installs have no roll-ups yet; fall back to raw readings.
+    if(rows.length)return {rows:rows.reverse(),limited:hs.size===800,hourly:true}
+  }
+  // Capped deliberately: every document read costs quota.
+  var snap=await getDocs(ref('readings',500)),raw=[]
+  snap.forEach(function(d){
+    var v=d.data(),val=v.values?v.values[s.key]:undefined
+    if(Number.isFinite(val)&&Number.isFinite(v.ts))raw.push([v.ts,val])
+  })
+  return {rows:raw.reverse(),limited:snap.size===500,hourly:false}
+}
 
 async function loadChart(){
-  var request=++chart.request,dev=chart.dev,key=chart.key,days=chart.days
+  var request=++chart.request,list=seriesList(),win=rangeWindow()
   chart.busy=true
   chart.rows=[]
+  chart.series=[]
   $('sh-csv').disabled=true
   $('sh-figs').innerHTML=''
   $('sh-plot').innerHTML='<p class="sheet-sub">Loading…</p>'
   $('sh-count').textContent=''
   try{
-    var since=Date.now()-days*86400000
-    // Capped deliberately: every document read costs quota, and 500 points is
-    // already more than a 720px-wide chart can show distinctly.
-    var q=query(collection(fs,'workspaces',myUid,'telemetry',dev,'readings'),
-                where('ts','>=',since), orderBy('ts','desc'), limit(500))
-    var snap=await getDocs(q)
+    var hourly=(win[1]-win[0])>2*86400000
+    var got=await Promise.all(list.map(function(s){return fetchRows(s,win[0],win[1],hourly)}))
     if(request!==chart.request)return
-    chart.limited=snap.size===500
-    var rows=[]
-    snap.forEach(function(d){
-      var v=d.data(), val=v.values?v.values[key]:undefined
-      if(Number.isFinite(val)&&Number.isFinite(v.ts))rows.push([v.ts,val])
-    })
-    chart.rows=rows.reverse()
-    $('sh-csv').disabled=!rows.length
+    chart.series=list.map(function(s,i){return {dev:s.dev,key:s.key,rows:got[i].rows,hourly:got[i].hourly}})
+    chart.rows=got[0].rows
+    chart.limited=got.some(function(g){return g.limited})
+    $('sh-csv').disabled=!got.some(function(g){return g.rows.length})
     drawChart()
   }catch(e){
     if(request!==chart.request)return
@@ -4208,149 +4804,330 @@ async function loadChart(){
 }
 
 function drawChart(){
-  var m=meta(chart.key,(devices[chart.dev]||{}).type), rows=chart.rows
-  if(!rows.length){
+  var p=chart.series[0]
+  $('sh-legend').innerHTML=''
+  show($('sh-zoomout'),!!chart.zoom&&chart.view==='trend')
+  if(!p||!chart.series.some(function(s){return s.rows.length})){
     $('sh-plot').innerHTML='<p class="sheet-sub">No readings stored in this period yet.</p>'
     $('sh-figs').innerHTML=''
     $('sh-count').textContent=''
     return
   }
+  if(chart.view==='daily')drawDaily()
+  else if(chart.view==='pattern')drawPattern()
+  else drawTrend()
+  paintFigs()
+}
 
-  var W=720,H=260,L=56,R=14,T=16,B=30
-  var xs=rows.map(function(r){return r[0]}), ys=rows.map(function(r){return r[1]})
-  var t0=xs[0], t1=xs[xs.length-1]
+function inZoom(rows){
+  var z=chart.zoom
+  return z?rows.filter(function(r){return r[0]>=z[0]&&r[0]<=z[1]}):rows
+}
+
+function drawTrend(){
+  var W=720,H=280,L=56,R=16,T=16,B=30
+  var ser=chart.series.map(function(s,i){
+    return {s:s,i:i,rows:inZoom(s.rows),m:meta(s.key,(devices[s.dev]||{}).type),u:unitOf(s),col:seriesColour(i,s.key),dash:DASH[i]}
+  }).filter(function(x){return x.rows.length})
+  if(!ser.length){$('sh-plot').innerHTML='<p class="sheet-sub">Nothing in the zoomed window.</p>';return}
+  var units=[]
+  ser.forEach(function(x){if(units.indexOf(x.u)<0)units.push(x.u)})
+  if(units.length>1)R=60
+  var single=ser.length===1,prim=ser[0].i===0?ser[0]:null
+  var lim=prim?((devices[chart.dev]||{}).limits||{})[chart.key]||{}:{}
+
+  var t0=Infinity,t1=-Infinity
+  ser.forEach(function(x){t0=Math.min(t0,x.rows[0][0]);t1=Math.max(t1,x.rows[x.rows.length-1][0])})
+  if(chart.zoom){t0=chart.zoom[0];t1=chart.zoom[1]}
   if(t1===t0)t1=t0+1
-  var lo=Math.min.apply(null,ys), hi=Math.max.apply(null,ys)
-  if(hi===lo){hi=lo+1;lo=lo-1}
-  var pad=(hi-lo)*0.12; lo-=pad; hi+=pad
-  var ticks=niceTicks(lo,hi,4)
   var px=function(t){return L+(t-t0)/(t1-t0)*(W-L-R)}
+  var tx=function(x){return t0+(x-L)/(W-L-R)*(t1-t0)}
+
+  var axes=units.map(function(u,ai){
+    var lo=Infinity,hi=-Infinity
+    ser.forEach(function(x){
+      if(x.u!==u)return
+      x.rows.forEach(function(r){lo=Math.min(lo,r[1],r[2]==null?r[1]:r[2]);hi=Math.max(hi,r[1],r[3]==null?r[1]:r[3])})
+    })
+    if(ai===0&&prim){if(lim.min!=null)lo=Math.min(lo,lim.min);if(lim.max!=null)hi=Math.max(hi,lim.max)}
+    if(hi===lo){hi=lo+1;lo=lo-1}
+    var pad=(hi-lo)*0.12;lo-=pad;hi+=pad
+    return {lo:lo,hi:hi,py:function(v){return T+(1-(v-lo)/(hi-lo))*(H-T-B)}}
+  })
+  var axisOf=function(x){return axes[units.indexOf(x.u)]}
+
+  var g=niceTicks(axes[0].lo,axes[0].hi,4).map(function(v){
+    var y=axes[0].py(v).toFixed(1)
+    return '<line class="grid-line" x1="'+L+'" y1="'+y+'" x2="'+(W-R)+'" y2="'+y+'"></line>'+
+      '<text class="ax" x="'+(L-8)+'" y="'+(Number(y)+3.5)+'" text-anchor="end">'+v.toLocaleString()+'</text>'
+  }).join('')
+  if(axes[1])g+=niceTicks(axes[1].lo,axes[1].hi,4).map(function(v){
+    return '<text class="ax" x="'+(W-R+8)+'" y="'+(axes[1].py(v)+3.5).toFixed(1)+'">'+v.toLocaleString()+'</text>'
+  }).join('')
+  if(units.length>1)g+='<text class="ax" x="'+(L-8)+'" y="10" text-anchor="end">'+esc(units[0])+'</text>'+
+    '<text class="ax" x="'+(W-R+8)+'" y="10">'+esc(units[1])+'</text>'
+  var span=(t1-t0)/86400000
+  g+=[0,0.5,1].map(function(f){
+    var t=t0+(t1-t0)*f
+    return '<text class="ax" x="'+px(t).toFixed(1)+'" y="'+(H-10)+'" text-anchor="'+(f===0?'start':f===1?'end':'middle')+'">'+fmtTime(t,span)+'</text>'
+  }).join('')
+
+  var body=''
+  ser.forEach(function(x){
+    var py=axisOf(x).py,d=''
+    x.rows.forEach(function(r,j){d+=(j?' L':'M')+px(r[0]).toFixed(1)+' '+py(r[1]).toFixed(1)})
+    if(single){
+      // Hourly roll-ups keep each hour's low and high: shown as a band.
+      if(x.s.hourly){
+        var up='',dn=''
+        x.rows.forEach(function(r,j){up+=(j?' L':'M')+px(r[0]).toFixed(1)+' '+py(r[3]).toFixed(1)})
+        for(var j=x.rows.length-1;j>=0;j--)dn+=' L'+px(x.rows[j][0]).toFixed(1)+' '+py(x.rows[j][2]).toFixed(1)
+        body+='<path class="c-band" d="'+up+dn+' Z"></path>'
+      }else body+='<path class="c-area" d="'+d+' L'+px(x.rows[x.rows.length-1][0]).toFixed(1)+' '+(H-B)+' L'+px(x.rows[0][0]).toFixed(1)+' '+(H-B)+' Z"></path>'
+      var sum=0;x.rows.forEach(function(r){sum+=r[1]})
+      var ay=py(sum/x.rows.length).toFixed(1)
+      body+='<line class="c-avg" x1="'+L+'" x2="'+(W-R)+'" y1="'+ay+'" y2="'+ay+'"><title>Average</title></line>'
+    }
+    body+='<path class="c-line" d="'+d+'" style="stroke:'+x.col+'"'+(x.dash?' stroke-dasharray="'+x.dash+'"':'')+'></path>'
+  })
+
+  if(prim){
+    var py0=axisOf(prim).py
+    ;[['min',lim.min,'below'],['max',lim.max,'above']].forEach(function(l){
+      if(l[1]==null)return
+      var y=py0(l[1]).toFixed(1)
+      body+='<line class="c-lim" x1="'+L+'" x2="'+(W-R)+'" y1="'+y+'" y2="'+y+'"></line>'+
+        '<text class="ax c-limt" x="'+(W-R-4)+'" y="'+(Number(y)-4)+'" text-anchor="end">alert '+l[2]+' '+l[1]+'</text>'
+    })
+    // Out-of-limit readings get a ring as well as a colour.
+    var outs=prim.rows.filter(function(r){return (lim.min!=null&&r[1]<lim.min)||(lim.max!=null&&r[1]>lim.max)}).slice(0,300)
+    body+=outs.map(function(r){return '<circle class="c-out" r="3.5" cx="'+px(r[0]).toFixed(1)+'" cy="'+py0(r[1]).toFixed(1)+'"></circle>'}).join('')
+  }
+
+  $('sh-plot').innerHTML=
+    '<svg viewBox="0 0 '+W+' '+H+'" role="img" aria-label="'+esc(ser.map(function(x){return seriesName(x.s)}).join(', '))+' over time">'+
+    g+body+
+    '<rect id="sh-sel" class="c-sel" y="'+T+'" height="'+(H-T-B)+'" style="display:none"></rect>'+
+    '<g id="sh-hover" style="display:none"><line class="c-hair" y1="'+T+'" y2="'+(H-B)+'"></line>'+
+      ser.map(function(x){return '<circle class="c-dot" r="4.5" style="fill:'+x.col+'"></circle>'}).join('')+'</g>'+
+    '<rect id="sh-hit" x="'+L+'" y="'+T+'" width="'+(W-L-R)+'" height="'+(H-T-B)+'" fill="transparent"></rect>'+
+    '</svg><div class="tip" id="sh-tip"></div>'
+  if(!single)$('sh-legend').innerHTML=ser.map(function(x){
+    return '<span><svg width="22" height="8" aria-hidden="true"><line x1="0" y1="4" x2="22" y2="4" stroke-width="2.5" style="stroke:'+x.col+'"'+
+      (x.dash?' stroke-dasharray="'+x.dash+'"':'')+'></line></svg>'+esc(seriesName(x.s))+(x.u?' ('+esc(x.u)+')':'')+'</span>'
+  }).join('')
+  wireTrend(ser,px,tx,axisOf,W,H)
+}
+
+function nearest(rows,t){
+  var best=0,bd=Infinity
+  for(var i=0;i<rows.length;i++){var d=Math.abs(rows[i][0]-t);if(d<bd){bd=d;best=i}}
+  return rows[best]
+}
+
+// The crosshair snaps to the nearest reading of every line; dragging across
+// the plot zooms into that window. Same readout on pointer and on touch.
+function wireTrend(ser,px,tx,axisOf,W,H){
+  var svg=$('sh-plot').querySelector('svg'),hit=$('sh-hit'),hov=$('sh-hover'),tip=$('sh-tip'),sel=$('sh-sel')
+  var line=hov.querySelector('line'),dots=hov.querySelectorAll('circle'),drag=null
+  function sx(evt){var box=svg.getBoundingClientRect();return (evt.clientX-box.left)/box.width*W}
+  function at(evt){
+    var box=svg.getBoundingClientRect(),t=tx(sx(evt)),r0=nearest(ser[0].rows,t),X=px(r0[0])
+    line.setAttribute('x1',X);line.setAttribute('x2',X)
+    hov.style.display=''
+    tip.textContent=''
+    var topY=H
+    ser.forEach(function(x,i){
+      var r=nearest(x.rows,t),Y=axisOf(x).py(r[1])
+      dots[i].setAttribute('cx',px(r[0]));dots[i].setAttribute('cy',Y)
+      topY=Math.min(topY,Y)
+      // textContent, not innerHTML, for anything derived from stored data.
+      var b=document.createElement('b'),k=document.createElement('span')
+      k.className='k';k.style.background=x.col
+      b.appendChild(k);b.appendChild(document.createTextNode((ser.length>1?seriesName(x.s)+'  ':'')+fmt(r[1],x.m)+x.m.u))
+      tip.appendChild(b)
+    })
+    var w=document.createElement('span');w.className='w';w.textContent=new Date(r0[0]).toLocaleString()
+    tip.appendChild(w)
+    tip.className='tip on'
+    tip.style.left=Math.min(88,Math.max(12,X/W*100))+'%'
+    tip.style.top=(topY/H*box.height-12)+'px'
+    if(drag){
+      var a=Math.min(drag,sx(evt)),b2=Math.max(drag,sx(evt))
+      sel.setAttribute('x',a);sel.setAttribute('width',b2-a);sel.style.display=''
+    }
+  }
+  hit.addEventListener('pointerdown',function(evt){drag=sx(evt);try{hit.setPointerCapture(evt.pointerId)}catch(e){}at(evt)})
+  hit.addEventListener('pointermove',at)
+  hit.addEventListener('pointerup',function(evt){
+    var x=sx(evt),a=drag
+    drag=null;sel.style.display='none'
+    if(a!=null&&Math.abs(x-a)>8){chart.zoom=[tx(Math.min(a,x)),tx(Math.max(a,x))];drawChart()}
+  })
+  hit.addEventListener('pointerleave',function(){if(drag==null){hov.style.display='none';tip.className='tip'}})
+}
+
+function drawDaily(){
+  var p=chart.series[0],m=meta(p.key,(devices[p.dev]||{}).type),days=dailyBuckets(p.rows,p.key)
+  var power=p.key==='power',W=720,H=260,L=56,R=16,T=20,B=30
+  var val=function(d){return power?d.kwh:d.avg}
+  var lo=Math.min(0,Math.min.apply(null,days.map(function(d){return power?d.kwh:d.min}))),
+      hi=Math.max.apply(null,days.map(function(d){return power?d.kwh:d.max}))
+  if(hi===lo)hi=lo+1
+  hi+=(hi-lo)*0.08
   var py=function(v){return T+(1-(v-lo)/(hi-lo))*(H-T-B)}
-
-  var d='M'+px(xs[0]).toFixed(1)+' '+py(ys[0]).toFixed(1)
-  for(var i=1;i<rows.length;i++)d+=' L'+px(xs[i]).toFixed(1)+' '+py(ys[i]).toFixed(1)
-  var area=d+' L'+px(t1).toFixed(1)+' '+(H-B)+' L'+px(t0).toFixed(1)+' '+(H-B)+' Z'
-
-  var g=ticks.map(function(v){
+  var slot=(W-L-R)/days.length,bw=Math.max(3,slot*0.68),every=Math.ceil(days.length/8)
+  var tariff=energyCfg&&energyCfg.tariff>0?energyCfg.tariff:0,cur=(energyCfg&&energyCfg.currency)||''
+  var g=niceTicks(lo,hi,4).map(function(v){
     return '<line class="grid-line" x1="'+L+'" y1="'+py(v).toFixed(1)+'" x2="'+(W-R)+'" y2="'+py(v).toFixed(1)+'"></line>'+
       '<text class="ax" x="'+(L-8)+'" y="'+(py(v)+3.5).toFixed(1)+'" text-anchor="end">'+v.toLocaleString()+'</text>'
   }).join('')
-
-  var xt=[0,0.5,1].map(function(f){
-    var t=t0+(t1-t0)*f
-    return '<text class="ax" x="'+px(t).toFixed(1)+'" y="'+(H-10)+'" text-anchor="'+
-      (f===0?'start':f===1?'end':'middle')+'">'+fmtTime(t,chart.days)+'</text>'
+  var bars=days.map(function(d,i){
+    var x=L+slot*i+(slot-bw)/2,v=val(d),y0=py(Math.max(0,lo)),y=py(v)
+    var dt=new Date(d.day),label=dt.toLocaleDateString()+': '+(power?v.toFixed(2)+' kWh'+(tariff?' · '+(v*tariff).toFixed(2)+' '+cur:''):
+      'avg '+fmt(v,m)+m.u+' (low '+fmt(d.min,m)+', high '+fmt(d.max,m)+')')
+    var s='<rect class="c-bar" x="'+x.toFixed(1)+'" y="'+Math.min(y,y0).toFixed(1)+'" width="'+bw.toFixed(1)+'" height="'+Math.max(1,Math.abs(y0-y)).toFixed(1)+'" rx="3"><title>'+esc(label)+'</title></rect>'
+    if(!power)s+='<line class="c-whisk" x1="'+(x+bw/2).toFixed(1)+'" x2="'+(x+bw/2).toFixed(1)+'" y1="'+py(d.max).toFixed(1)+'" y2="'+py(d.min).toFixed(1)+'"></line>'
+    if(i%every===0)s+='<text class="ax" x="'+(x+bw/2).toFixed(1)+'" y="'+(H-10)+'" text-anchor="middle">'+dt.getDate()+'/'+(dt.getMonth()+1)+'</text>'
+    return s
   }).join('')
+  $('sh-plot').innerHTML='<svg viewBox="0 0 '+W+' '+H+'" role="img" aria-label="'+esc(m.n)+(power?' energy':' average')+' per day">'+g+bars+'</svg>'
+  $('sh-legend').innerHTML='<span>'+(power?'Energy per day (kWh)'+(tariff?' · tap a bar for cost':''):'Daily average, with each day\'s low to high')+'</span>'
+}
 
-  var last=rows[rows.length-1]
-  $('sh-plot').innerHTML=
-    '<svg viewBox="0 0 '+W+' '+H+'" role="img" aria-label="'+esc(m.n)+' over time">'+
-    g+xt+
-    '<path class="c-area" d="'+area+'"></path>'+
-    '<path class="c-line" d="'+d+'"></path>'+
-    '<g id="sh-hover" style="display:none">'+
-      '<line class="c-hair" y1="'+T+'" y2="'+(H-B)+'"></line>'+
-      '<circle class="c-dot" r="4.5"></circle></g>'+
-    '<rect id="sh-hit" x="'+L+'" y="'+T+'" width="'+(W-L-R)+'" height="'+(H-T-B)+'" fill="transparent"></rect>'+
-    '</svg><div class="tip" id="sh-tip"></div>'
+function drawPattern(){
+  var p=chart.series[0],m=meta(p.key,(devices[p.dev]||{}).type),grid=patternGrid(p.rows)
+  var W=720,L=44,R=8,T=22,ch=26,cw=(W-L-R)/24,H=T+7*ch+6,NAMES=['Mon','Tue','Wed','Thu','Fri','Sat','Sun']
+  var lo=Infinity,hi=-Infinity
+  grid.forEach(function(row){row.forEach(function(c){if(c.n){var a=c.sum/c.n;lo=Math.min(lo,a);hi=Math.max(hi,a)}})})
+  var cells='',labels=''
+  for(var h=0;h<24;h+=3)labels+='<text class="ax" x="'+(L+h*cw+cw/2).toFixed(1)+'" y="14" text-anchor="middle">'+(h<10?'0':'')+h+':00</text>'
+  grid.forEach(function(row,d){
+    labels+='<text class="ax" x="'+(L-8)+'" y="'+(T+d*ch+ch/2+3.5)+'" text-anchor="end">'+NAMES[d]+'</text>'
+    row.forEach(function(c,h){
+      var x=(L+h*cw+1).toFixed(1),y=T+d*ch+1,a=c.n?c.sum/c.n:null
+      var op=a==null?0:0.12+0.88*(hi>lo?(a-lo)/(hi-lo):1)
+      cells+='<rect x="'+x+'" y="'+y+'" width="'+(cw-2).toFixed(1)+'" height="'+(ch-2)+'" rx="3" class="'+(a==null?'c-empty':'c-cell')+'"'+
+        (a==null?'':' fill-opacity="'+op.toFixed(2)+'"')+'><title>'+NAMES[d]+' '+(h<10?'0':'')+h+':00 - '+
+        (a==null?'no data':'avg '+fmt(a,m)+m.u)+'</title></rect>'
+    })
+  })
+  $('sh-plot').innerHTML='<svg viewBox="0 0 '+W+' '+H+'" role="img" aria-label="'+esc(m.n)+' by weekday and hour">'+labels+cells+'</svg>'
+  $('sh-legend').innerHTML=lo<=hi
+    ? '<span>Average by weekday and hour · lighter '+esc(fmt(lo,m)+m.u)+' → darker '+esc(fmt(hi,m)+m.u)+'</span>'
+    : ''
+}
 
-  var sum=0; for(var j=0;j<ys.length;j++)sum+=ys[j]
-  $('sh-figs').innerHTML=
-    fig('Latest',fmt(last[1],m)+m.u)+
-    fig('Minimum',fmt(Math.min.apply(null,ys),m)+m.u)+
-    fig('Maximum',fmt(Math.max.apply(null,ys),m)+m.u)+
-    fig('Average',fmt(sum/ys.length,m)+m.u)
-  $('sh-count').textContent=(chart.limited?'Latest 500 stored readings (limit reached) · ':'')+rows.length+' plotted · '+
-    new Date(t0).toLocaleString()+' → '+new Date(t1).toLocaleString()
-
-  wireHover(px,py,rows,m,W,H)
+function paintFigs(){
+  var p=chart.series[0],m=meta(p.key,(devices[p.dev]||{}).type),rows=chart.view==='trend'?inZoom(p.rows):p.rows
+  if(!rows.length){$('sh-figs').innerHTML='';$('sh-count').textContent='';return}
+  var sum=0,lo=Infinity,hi=-Infinity
+  rows.forEach(function(r){sum+=r[1];lo=Math.min(lo,r[2]==null?r[1]:r[2]);hi=Math.max(hi,r[3]==null?r[1]:r[3])})
+  var out=fig('Latest',fmt(rows[rows.length-1][1],m)+m.u)+fig('Minimum',fmt(lo,m)+m.u)+
+    fig('Maximum',fmt(hi,m)+m.u)+fig('Average',fmt(sum/rows.length,m)+m.u)
+  if(p.key==='power'){
+    var kwh=(p.hourly?rows.reduce(function(s,r){return s+(r[4]||0)},0):energyWh(rows))/1000
+    out+=fig('Energy',kwh.toFixed(kwh<10?3:1)+' kWh')
+    if(energyCfg&&energyCfg.tariff>0)out+=fig('Cost',(kwh*energyCfg.tariff).toFixed(2)+' '+(energyCfg.currency||''))
+  }
+  var lim=((devices[p.dev]||{}).limits||{})[p.key]
+  if(lim&&(lim.min!=null||lim.max!=null)){
+    var bad=rows.filter(function(r){return (lim.min!=null&&r[1]<lim.min)||(lim.max!=null&&r[1]>lim.max)}).length
+    out+=fig('Outside limits',Math.round(bad/rows.length*100)+'%')
+  }
+  $('sh-figs').innerHTML=out
+  $('sh-count').textContent=(chart.limited?'Newest records only (limit reached) · ':'')+rows.length+(p.hourly?' hourly averages':' readings')+' · '+
+    new Date(rows[0][0]).toLocaleString()+' → '+new Date(rows[rows.length-1][0]).toLocaleString()
 }
 
 function fig(k,v){return '<div class="fig"><div class="k">'+esc(k)+'</div><div class="v">'+esc(v)+'</div></div>'}
 
-// The crosshair snaps to the nearest reading, so the reader aims at a time
-// rather than at a 2px line. Same readout on pointer and on touch.
-function wireHover(px,py,rows,m,W,H){
-  var svg=$('sh-plot').querySelector('svg'), hit=$('sh-hit')
-  var hov=$('sh-hover'), tip=$('sh-tip')
-  var line=hov.querySelector('line'), dot=hov.querySelector('circle')
-
-  function at(evt){
-    var box=svg.getBoundingClientRect()
-    var sx=(evt.clientX-box.left)/box.width*W
-    var best=0,bd=Infinity
-    for(var i=0;i<rows.length;i++){
-      var dd=Math.abs(px(rows[i][0])-sx)
-      if(dd<bd){bd=dd;best=i}
-    }
-    var r=rows[best],X=px(r[0]),Y=py(r[1])
-    line.setAttribute('x1',X);line.setAttribute('x2',X)
-    dot.setAttribute('cx',X);dot.setAttribute('cy',Y)
-    hov.style.display=''
-    tip.className='tip on'
-    tip.style.left=Math.min(90,Math.max(10,X/W*100))+'%'
-    tip.style.top=(Y/H*box.height-12)+'px'
-    // textContent, not innerHTML, for anything derived from stored data.
-    tip.textContent=''
-    var b=document.createElement('b')
-    var key=document.createElement('span'); key.className='k'
-    b.appendChild(key); b.appendChild(document.createTextNode(fmt(r[1],m)+m.u))
-    var w=document.createElement('span'); w.className='w'
-    w.textContent=new Date(r[0]).toLocaleString()
-    tip.appendChild(b); tip.appendChild(w)
-  }
-  hit.addEventListener('pointermove',at)
-  hit.addEventListener('pointerdown',at)
-  hit.addEventListener('pointerleave',function(){hov.style.display='none';tip.className='tip'})
-}
-
 function chartCsv(){
-  if(chart.busy||!chart.rows.length)return
-  var dev=devices[chart.dev]||{},m=meta(chart.key,dev.type)
-  var lines=['timestamp_ms,iso8601,'+chart.key+(m.u?'_'+m.u.replace(/[^\w]/g,''):'')]
-  chart.rows.forEach(function(r){lines.push(r[0]+','+new Date(r[0]).toISOString()+','+r[1])})
+  if(chart.busy||!chart.series.length)return
+  var lines=['timestamp_ms,iso8601,device,metric,unit,value']
+  chart.series.forEach(function(s){
+    var dev=devices[s.dev]||{},m=meta(s.key,dev.type)
+    var name='"'+String(dev.name||s.dev).replace(/"/g,'""')+'"'
+    s.rows.forEach(function(r){lines.push(r[0]+','+new Date(r[0]).toISOString()+','+name+','+s.key+','+(m.u||'')+','+r[1])})
+  })
+  var dev=devices[chart.dev]||{}
   var blob=new Blob([lines.join('\n')],{type:'text/csv'})
   var a=document.createElement('a')
   a.href=URL.createObjectURL(blob)
-  a.download=((dev.name||chart.dev)+'-'+chart.key+'-'+chart.days+'d.csv').replace(/[^\w.-]+/g,'_')
+  a.download=((dev.name||chart.dev)+'-'+chart.key+'.csv').replace(/[^\w.-]+/g,'_')
   a.click()
   setTimeout(function(){URL.revokeObjectURL(a.href)},1000)
 }
 
 document.addEventListener('click',function(e){
   if(!e.target.closest)return
-  // Switching metric inside the open popup - checked first, because a chip
-  // also sits inside the sheet and must not fall through to anything else.
+  // Chips inside the open popup are checked first, because they sit inside
+  // the sheet and must not fall through to anything else.
   var chip=e.target.closest('#sh-metrics [data-metric]')
-  if(chip){
-    chart.key=chip.dataset.metric
-    $('sh-metrics').querySelectorAll('button').forEach(function(x){
-      x.classList.toggle('on',x===chip)
-    })
-    paintSheetHead()
-    loadChart()
-    return
-  }
+  if(chip){chart.key=chip.dataset.metric;chart.extra=[];chart.zoom=null;paintSheet();loadChart();return}
+  var drop=e.target.closest('#sh-metrics [data-drop]')
+  if(drop){chart.extra.splice(Number(drop.dataset.drop),1);paintSheet();loadChart();return}
   // A History button carries only the device; a reading row also carries the
-  // metric it should open on.
+  // metric it should open on. Wall display is read-only.
   var h=e.target.closest('[data-hist]')
-  if(h)openDevice(h.dataset.hist,h.dataset.metricKey||null)
+  if(h&&!document.body.classList.contains('wall'))openDevice(h.dataset.hist,h.dataset.metricKey||null)
 })
 document.addEventListener('keydown',function(e){
   if(e.key==='Escape'&&!$('sheet').hidden){closeChart();return}
   if(e.key!=='Enter'&&e.key!==' ')return
   var h=e.target.closest&&e.target.closest('[data-hist]')
-  if(h){e.preventDefault();openDevice(h.dataset.hist,h.dataset.metricKey||null)}
+  if(h&&!document.body.classList.contains('wall')){e.preventDefault();openDevice(h.dataset.hist,h.dataset.metricKey||null)}
 })
 $('sh-close').onclick=closeChart
 $('sheet').addEventListener('click',function(e){if(e.target===$('sheet'))closeChart()})
 $('sh-csv').onclick=chartCsv
+$('sh-zoomout').onclick=function(){chart.zoom=null;drawChart()}
+$('sh-add').onchange=function(){
+  var v=this.value.split('|');this.value=''
+  if(v.length!==2)return
+  var s={dev:v[0],key:v[1]},units=[]
+  seriesList().concat([s]).forEach(function(x){if(units.indexOf(unitOf(x))<0)units.push(unitOf(x))})
+  if(units.length>2){$('sh-count').textContent='A chart can show two units at most - remove a line first.';return}
+  chart.extra.push(s);paintSheet();loadChart()
+}
 $('sh-ranges').addEventListener('click',function(e){
   var b=e.target.closest('[data-range]');if(!b)return
-  chart.days=Number(b.dataset.range)
-  $('sh-ranges').querySelectorAll('button').forEach(function(x){x.classList.toggle('on',x===b)})
-  loadChart()
+  if(b.dataset.range==='custom'){$('sh-dates').hidden=!$('sh-dates').hidden;return}
+  chart.days=Number(b.dataset.range);chart.from=null;chart.zoom=null;$('sh-dates').hidden=true
+  paintSheet();loadChart()
 })
+$('sh-apply').onclick=function(){
+  var f=$('sh-from').value,t=$('sh-to').value
+  if(!f||!t||f>t){$('sh-count').textContent='Pick a start date on or before the end date.';return}
+  var a=f.split('-'),b=t.split('-')
+  chart.from=new Date(a[0],a[1]-1,a[2]).getTime()
+  chart.to=new Date(b[0],b[1]-1,Number(b[2])+1).getTime()
+  chart.zoom=null;paintSheet();loadChart()
+}
+$('sh-views').addEventListener('click',function(e){
+  var b=e.target.closest('[data-view]');if(!b)return
+  chart.view=b.dataset.view;chart.zoom=null
+  // Daily bars and the weekly pattern need weeks, not hours.
+  if(chart.view!=='trend'&&!chart.from&&chart.days<7){chart.days=30;paintSheet();loadChart();return}
+  paintSheet();drawChart()
+})
+$('sh-limsave').onclick=async function(){
+  var num=function(id){var v=$(id).value.trim();return v===''?null:Number(v)}
+  var lo=num('sh-min'),hi=num('sh-max')
+  if((lo!=null&&!Number.isFinite(lo))||(hi!=null&&!Number.isFinite(hi))||(lo!=null&&hi!=null&&lo>=hi)){
+    $('sh-limmsg').textContent='"Below" must be less than "Above".';return
+  }
+  var limits=Object.assign({},(devices[chart.dev]||{}).limits)
+  if(lo==null&&hi==null)delete limits[chart.key]
+  else limits[chart.key]={min:lo,max:hi}
+  $('sh-limmsg').textContent='Saving…'
+  try{
+    await updateDoc(doc(fs,'workspaces',myUid,'devices',chart.dev),{limits:limits})
+    if(devices[chart.dev])devices[chart.dev].limits=limits
+    $('sh-limmsg').textContent='Saved. Telegram alerts use these limits.'
+    drawChart()
+  }catch(err){$('sh-limmsg').textContent=err.message||'Could not save.'}
+}
 
 // -------- live debug stream --------
 var es=null,dbgPaused=false,dbgRows=[]
